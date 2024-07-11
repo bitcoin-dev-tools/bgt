@@ -23,6 +23,7 @@ pub enum BuildAction {
     Build,
     NonCodeSigned,
     CodeSigned,
+    Clean,
 }
 
 pub struct Builder {
@@ -234,8 +235,8 @@ impl Builder {
                 self.guix_codesign()?;
                 self.guix_attest("codesigned")?;
             }
+            BuildAction::Clean => self.guix_clean()?,
         }
-
         Ok(())
     }
 
@@ -357,6 +358,18 @@ impl Builder {
                     .to_str()
                     .unwrap(),
             )
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        self.run_command_with_output(command)?;
+        Ok(())
+    }
+
+    fn guix_clean(&self) -> Result<()> {
+        info!("Running guix-clean");
+        let mut command = Command::new(self.bitcoin_dir.join("contrib/guix/guix-clean"));
+        command
+            .current_dir(&self.bitcoin_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 

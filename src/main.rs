@@ -109,7 +109,8 @@ async fn main() -> Result<()> {
             run_watcher(&config, &mut seen_tags).await?;
         }
         Commands::Clean => {
-            unimplemented!();
+            let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())?;
+            builder.run().await?;
         }
     }
 

@@ -16,19 +16,29 @@ cd bgt-builder
 cargo run init
 
 # Build a specific tag
-cargo run tag v27.1
+cargo run build v27.1
 
-# Enable debug logging
-RUST_LOG=debug cargo run tag v26.2
+# Attest to non-codesigned outputs for a specific tag
+cargo run attest v27.1
+
+# Codesign outputs for a specific tag
+cargo run codesign v27.1
 
 # Run a watcher to auto-build new tags pushed to GH
+# Not yet implemented
 cargo run watcher
+
+# Clean directories leaving cache intact
+cargo run clean
+
+# Enable debug logging on any command
+RUST_LOG=debug cargo run build v26.2
 ```
 
 ## Plans
 
 - [x] implement Guix building
 - [x] permit building a specified tag
-- [ ] enable signing
+- [x] enable signing
 - [ ] add advanced GPG signing solutions (tbd)
 - [ ] remove some dependencies
