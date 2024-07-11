@@ -8,6 +8,6 @@ Perform automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/c
 
 ## Plans
 
-- [ ] implement Guix building
+- [x] implement Guix building
 - [ ] permit building a specified tag
 - [ ] add advanced GPG signing solutions (tbd)

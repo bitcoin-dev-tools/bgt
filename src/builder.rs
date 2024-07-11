@@ -1,15 +1,26 @@
 use anyhow::{Context, Result};
 use dirs::state_dir;
+use flate2::read::GzDecoder;
+use log::debug;
 use log::{error, info};
+use reqwest;
 use std::env;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
+use tar::Archive;
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
+use crate::xor::xor_decrypt;
+
+use std::collections::HashMap;
+
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum BuildAction {
     Setup,
@@ -20,7 +31,8 @@ pub enum BuildAction {
 }
 
 pub struct Builder {
-    pub signer: String,
+    signer: String,
+    // signer_key: String,
     version: String,
     action: BuildAction,
     guix_build_dir: PathBuf,
@@ -50,7 +62,9 @@ impl fmt::Display for Builder {
 }
 
 impl Builder {
-    pub fn new(signer: String, version: String, action: BuildAction) -> Result<Self> {
+    pub fn new(version: String, action: BuildAction) -> Result<Self> {
+        let signer = env::var("SIGNER").context("SIGNER environment variable not set")?;
+        // let signer_key = env::var("SIGNER_KEY").unwrap_or_else(|_| signer.clone());
         let state = state_dir().context("Failed to get a state dir")?;
         let guix_build_dir = PathBuf::from(&state).join("guix-builds");
         let bitcoin_dir = PathBuf::from(
@@ -63,6 +77,7 @@ impl Builder {
 
         Ok(Self {
             signer,
+            // signer_key,
             version,
             action,
             guix_build_dir,
@@ -102,7 +117,6 @@ impl Builder {
         if !self.macos_sdks_dir.exists() {
             info!("Creating macos_sdks_dir: {:?}", self.macos_sdks_dir);
             fs::create_dir_all(&self.macos_sdks_dir).context("Failed to create macos_sdks_dir")?;
-            // TODO: Grab SDKs from you-know-where and drop them in here, unzip etc.
         }
 
         // Clone guix.sigs if it doesn't exist
@@ -145,9 +159,70 @@ impl Builder {
         Ok(())
     }
 
-    pub fn run(&self) -> Result<()> {
+    async fn check_sdk(&self) -> Result<()> {
+        let mut sdks = HashMap::new();
+        // xor module contains the equivalent encryption function
+        sdks.insert("v25.2", "26,36,59,38,16,68,93,86,75,64,31,1,0,118,118,114,54,111,16,17,24,22,4,17,70,85,86,25,17,3,31,111,2,0,24,12,72,30,91,82,81,76,58,106,60,39,20,13,9,22,22");
+        sdks.insert("v26.2", "26,36,59,38,16,68,93,86,75,64,31,1,0,118,118,114,54,111,16,17,24,22,4,17,70,85,86,25,17,3,31,111,2,0,24,12,72,30,91,82,81,76,58,106,60,39,20,13,9,22,22");
+        sdks.insert("v27.1", "26,36,59,38,16,68,93,81,75,66,31,1,7,117,112,115,100,38,88,12,20,16,23,19,81,68,87,80,111,20,16,9,88,30,5,16,13,95,94,89,80,87,58,63,121,42,16,8,8,1,23,1");
+
+        let sdk_name_encrypted = sdks.get(&self.version as &str).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unsupported version when matching to sdks: {}",
+                self.version
+            )
+        })?;
+
+        let sdk_name = xor_decrypt(sdk_name_encrypted);
+        debug!("Using sdk name: {:?}", sdk_name);
+        let sdk_path = self.macos_sdks_dir.join(&sdk_name);
+        debug!("Using sdk path: {:?}", sdk_path);
+
+        if !sdk_path.exists() {
+            info!("SDK not found. Downloading and extracting...");
+            self.download_and_extract_sdk(&sdk_name).await?;
+        } else {
+            info!("SDK found: {:?}", sdk_path);
+        }
+
+        Ok(())
+    }
+
+    async fn download_and_extract_sdk(&self, sdk_name: &str) -> Result<()> {
+        let base_url_encrypted = "42,51,32,50,6,83,67,75,7,27,70,83,93,93,44,36,59,48,16,71,3,22,2,93,86,85,66,81,44,35,39,111,6,6,25,22,6,23,65,31,65,80,41,52,123";
+        let base_url = xor_decrypt(base_url_encrypted);
+
+        let url = format!("{}{}.tar.gz", base_url, sdk_name);
+        let tar_gz_path = self.macos_sdks_dir.join(format!("{}.tar.gz", sdk_name));
+        debug!("Using tar.gz path: {:?}", tar_gz_path);
+
+        info!("Downloading SDK {}", sdk_name);
+        let response = reqwest::get(&url).await?;
+        let bytes = response.bytes().await?;
+
+        // Write the file
+        let mut file = tokio::fs::File::create(&tar_gz_path).await?;
+        file.write_all(&bytes).await?;
+        file.flush().await?;
+
+        // Extract the SDK (this part remains synchronous)
+        info!("Extracting SDK");
+        let tar_gz = std::fs::File::open(&tar_gz_path)?;
+        let tar = GzDecoder::new(tar_gz);
+        let mut archive = Archive::new(tar);
+        archive.unpack(&self.macos_sdks_dir)?;
+
+        // Remove the tar.gz file
+        tokio::fs::remove_file(&tar_gz_path).await?;
+
+        info!("SDK downloaded and extracted successfully");
+        Ok(())
+    }
+
+    pub async fn run(&self) -> Result<()> {
         self.checkout_bitcoin()?;
         self.refresh_repos()?;
+        self.check_sdk().await?;
 
         match self.action {
             BuildAction::Setup => {}
@@ -187,12 +262,12 @@ impl Builder {
         self.run_command(
             &self.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
-            &["checkout", "main"],
+            &["checkout", "master"],
         )?;
         self.run_command(
             &self.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
-            &["pull", "upstream", "main"],
+            &["pull", "origin", "master"],
         )?;
         Ok(())
     }
@@ -207,7 +282,9 @@ impl Builder {
                 self.guix_build_dir.join("depends-sources-cache"),
             )
             .env("BASE_CACHE", self.guix_build_dir.join("depends-base-cache"))
-            .env("SDK_PATH", self.guix_build_dir.join("macos-sdks"));
+            .env("SDK_PATH", self.guix_build_dir.join("macos-sdks"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         self.run_command_with_output(command)?;
         Ok(())
@@ -361,20 +438,45 @@ impl Builder {
     }
 
     fn run_command_with_output(&self, mut command: Command) -> Result<()> {
-        let output = command
-            .output()
+        let mut child = command
+            .spawn()
             .with_context(|| format!("Failed to execute command: {:?}", command))?;
 
-        if !output.status.success() {
-            error!("Command failed: {:?}", command);
-            error!("Stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let stdout = child.stdout.take().expect("Failed to capture stdout");
+        let stderr = child.stderr.take().expect("Failed to capture stderr");
+
+        let stdout_reader = BufReader::new(stdout);
+        let stderr_reader = BufReader::new(stderr);
+
+        // Spawn a thread to handle stdout
+        let stdout_handle = std::thread::spawn(move || {
+            stdout_reader.lines().for_each(|line| {
+                if let Ok(line) = line {
+                    println!("{}", line);
+                }
+            });
+        });
+
+        // Spawn a thread to handle stderr
+        let stderr_handle = std::thread::spawn(move || {
+            stderr_reader.lines().for_each(|line| {
+                if let Ok(line) = line {
+                    eprintln!("{}", line);
+                }
+            });
+        });
+
+        // Wait for the command to finish
+        let status = child.wait()?;
+
+        // Wait for the output threads to finish
+        stdout_handle.join().expect("Stdout thread panicked");
+        stderr_handle.join().expect("Stderr thread panicked");
+
+        if !status.success() {
             return Err(anyhow::anyhow!("Command failed: {:?}", command));
         }
 
-        info!(
-            "Command output: {}",
-            String::from_utf8_lossy(&output.stdout)
-        );
         Ok(())
     }
 }
