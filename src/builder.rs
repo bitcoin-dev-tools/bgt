@@ -3,11 +3,16 @@ use dirs::state_dir;
 use log::{error, info};
 use std::env;
 use std::fmt;
+use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
+use tokio::time::timeout;
 
 #[derive(Debug)]
 pub enum BuildAction {
+    Setup,
     Build,
     NonCodeSigned,
     CodeSigned,
@@ -68,11 +73,84 @@ impl Builder {
         })
     }
 
+    pub async fn init(&self) -> Result<()> {
+        // Create guix_build_dir if it doesn't exist
+        if !self.guix_build_dir.exists() {
+            info!("Creating guix_build_dir: {:?}", self.guix_build_dir);
+            fs::create_dir_all(&self.guix_build_dir).context("Failed to create guix_build_dir")?;
+        }
+
+        // Clone bitcoin-detached-sigs if it doesn't exist
+        if !self.bitcoin_detached_sigs_dir.exists() {
+            info!("Cloning bitcoin-detached-sigs repository");
+            self.run_command(
+                &self.guix_build_dir,
+                "git",
+                &[
+                    "clone",
+                    "https://github.com/bitcoin-core/bitcoin-detached-sigs",
+                    self.bitcoin_detached_sigs_dir
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
+                ],
+            )?;
+        }
+
+        // Create macos_sdks_dir if it doesn't exist
+        if !self.macos_sdks_dir.exists() {
+            info!("Creating macos_sdks_dir: {:?}", self.macos_sdks_dir);
+            fs::create_dir_all(&self.macos_sdks_dir).context("Failed to create macos_sdks_dir")?;
+            // TODO: Grab SDKs from you-know-where and drop them in here, unzip etc.
+        }
+
+        // Clone guix.sigs if it doesn't exist
+        if !self.guix_sigs_dir.exists() {
+            info!("Cloning guix.sigs repository");
+            self.run_command(
+                &self.guix_build_dir,
+                "git",
+                &[
+                    "clone",
+                    "--origin",
+                    "upstream",
+                    "https://github.com/bitcoin-core/guix.sigs.git",
+                    self.guix_sigs_dir.file_name().unwrap().to_str().unwrap(),
+                ],
+            )?;
+
+            error!("Cloned guix.sigs repository into {:?}, but you must set the `origin` remote to your fork", self.guix_sigs_dir);
+
+            // Ask for user input with a 5-minute timeout
+            let origin_url = match timeout(Duration::from_secs(300), get_origin_input()).await {
+                Ok(Ok(url)) => url,
+                Ok(Err(e)) => return Err(anyhow::anyhow!("Error getting user input: {}", e)),
+                Err(_) => {
+                    error!("Timeout waiting for user input");
+                    return Err(anyhow::anyhow!("Cannot continue without an `origin` remote set in the guix.sigs repository"));
+                }
+            };
+
+            // Set the origin remote
+            self.run_command(
+                &self.guix_sigs_dir,
+                "git",
+                &["remote", "add", "origin", &origin_url],
+            )?;
+
+            info!("Set origin remote to: {}", origin_url);
+        }
+
+        Ok(())
+    }
+
     pub fn run(&self) -> Result<()> {
         self.checkout_bitcoin()?;
         self.refresh_repos()?;
 
         match self.action {
+            BuildAction::Setup => {}
             BuildAction::Build => self.guix_build()?,
             BuildAction::NonCodeSigned => self.guix_attest()?,
             BuildAction::CodeSigned => self.guix_codesign()?,
@@ -299,4 +377,12 @@ impl Builder {
         );
         Ok(())
     }
+}
+
+async fn get_origin_input() -> Result<String> {
+    print!("Enter the URL for your guix.sigs fork: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
 }

@@ -22,8 +22,8 @@ async fn main() -> Result<()> {
     info!("Creating Octocrab instance");
     let octocrab = Octocrab::builder().build()?;
 
-    // Initialize the builder early
-    let builder = match initialize_builder() {
+    // Initialize the builder early to catch configuration errors
+    let builder = match initialize_builder().await {
         Ok(b) => {
             info!("Builder initialized successfully:\n{}", b);
             b
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
 fn build_tag(tag: &str, builder: &Builder) {
     info!("New tag detected: {}", tag);
 
-    // Create a new Builder instance with the updated tag
+    // Create a new Builder instance with the same signer, and new tag
     let tag_builder = Builder::new(builder.signer.clone(), tag.to_string(), BuildAction::Build)
         .expect("Failed to create new Builder instance");
 
@@ -85,7 +85,9 @@ fn build_tag(tag: &str, builder: &Builder) {
     }
 }
 
-fn initialize_builder() -> Result<Builder> {
+async fn initialize_builder() -> Result<Builder> {
     let signer = env::var("SIGNER").context("SIGNER environment variable not set")?;
-    Builder::new(signer, String::new(), BuildAction::Build)
+    let builder = Builder::new(signer, String::new(), BuildAction::Setup)?;
+    builder.init().await?;
+    Ok(builder)
 }
