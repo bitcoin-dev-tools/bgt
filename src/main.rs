@@ -3,12 +3,13 @@ mod config;
 mod fetcher;
 mod version;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use builder::{BuildAction, Builder};
 use config::Config;
 use fetcher::{check_for_new_tags, fetch_all_tags};
 use log::{debug, error, info};
 use octocrab::Octocrab;
+use std::env;
 use tokio::signal;
 use tokio::time::sleep;
 
@@ -20,6 +21,18 @@ async fn main() -> Result<()> {
 
     info!("Creating Octocrab instance");
     let octocrab = Octocrab::builder().build()?;
+
+    // Initialize the builder early
+    let builder = match initialize_builder() {
+        Ok(b) => {
+            info!("Builder initialized successfully:\n{}", b);
+            b
+        }
+        Err(e) => {
+            error!("Failed to initialize builder: {:?}", e);
+            return Err(e);
+        }
+    };
 
     // Initialize seen_tags with all existing tags
     let mut seen_tags = fetch_all_tags(&octocrab, &config).await?;
@@ -37,7 +50,8 @@ async fn main() -> Result<()> {
                         if !new_tags.is_empty() {
                             info!("Detected {} new tags", new_tags.len());
                             for tag in new_tags {
-                                new_tag_detected(&tag);
+                                info!("Building tag {}", tag);
+                                build_tag(&tag, &builder);
                             }
                         } else {
                             debug!("No new tags detected.");
@@ -58,20 +72,20 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn new_tag_detected(tag: &str) {
+fn build_tag(tag: &str, builder: &Builder) {
     info!("New tag detected: {}", tag);
 
-    // Initialize and run the builder
-    match Builder::new(
-        "your_signer_name".to_string(),
-        tag.to_string(),
-        BuildAction::All,
-    ) {
-        Ok(builder) => {
-            if let Err(e) = builder.run() {
-                error!("Build process failed: {:?}", e);
-            }
-        }
-        Err(e) => error!("Failed to initialize builder: {:?}", e),
+    // Create a new Builder instance with the updated tag
+    let tag_builder = Builder::new(builder.signer.clone(), tag.to_string(), BuildAction::Build)
+        .expect("Failed to create new Builder instance");
+
+    info!("Using builder for tag {}:\n{}", tag, tag_builder);
+    if let Err(e) = tag_builder.run() {
+        error!("Build process for tag {} failed: {:?}", tag, e);
     }
+}
+
+fn initialize_builder() -> Result<Builder> {
+    let signer = env::var("SIGNER").context("SIGNER environment variable not set")?;
+    Builder::new(signer, String::new(), BuildAction::Build)
 }

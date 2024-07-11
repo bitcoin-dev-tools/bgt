@@ -1,34 +1,69 @@
 use anyhow::{Context, Result};
+use dirs::state_dir;
 use log::{error, info};
 use std::env;
+use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub struct Builder {
-    signer: String,
-    version: String,
-    action: BuildAction,
-    guix_build_dir: PathBuf,
-    bitcoin_dir: PathBuf,
-}
-
+#[derive(Debug)]
 pub enum BuildAction {
     Build,
     NonCodeSigned,
+    CodeSigned,
     All,
+}
+
+pub struct Builder {
+    pub signer: String,
+    version: String,
+    action: BuildAction,
+    guix_build_dir: PathBuf,
+    guix_sigs_dir: PathBuf,
+    bitcoin_detached_sigs_dir: PathBuf,
+    macos_sdks_dir: PathBuf,
+    bitcoin_dir: PathBuf,
+}
+
+impl fmt::Display for Builder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Builder {{")?;
+        writeln!(f, "  signer: {}", self.signer)?;
+        writeln!(f, "  version: {}", self.version)?;
+        writeln!(f, "  action: {:?}", self.action)?;
+        writeln!(f, "  guix_build_dir: {:?}", self.guix_build_dir)?;
+        writeln!(f, "  guix_sigs_dir: {:?}", self.guix_sigs_dir)?;
+        writeln!(
+            f,
+            "  bitcoin_detached_sigs_dir: {:?}",
+            self.bitcoin_detached_sigs_dir
+        )?;
+        writeln!(f, "  macos_sdks_dir: {:?}", self.macos_sdks_dir)?;
+        writeln!(f, "  bitcoin_dir: {:?}", self.bitcoin_dir)?;
+        writeln!(f, "}}")
+    }
 }
 
 impl Builder {
     pub fn new(signer: String, version: String, action: BuildAction) -> Result<Self> {
-        let home = env::var("HOME").context("Failed to get HOME environment variable")?;
-        let guix_build_dir = PathBuf::from(&home).join("guix-builds");
-        let bitcoin_dir = PathBuf::from(&home).join("bitcoin");
+        let state = state_dir().context("Failed to get a state dir")?;
+        let guix_build_dir = PathBuf::from(&state).join("guix-builds");
+        let bitcoin_dir = PathBuf::from(
+            env::var("BITCOIN_SOURCE_DIR")
+                .expect("Failed to get BITCOIN_SOURCE_DIR environment variable"),
+        );
+        let guix_sigs_dir = guix_build_dir.join("guix.sigs");
+        let bitcoin_detached_sigs_dir = guix_build_dir.join("bitcoin-detached-sigs");
+        let macos_sdks_dir = guix_build_dir.join("macos-sdks");
 
         Ok(Self {
             signer,
             version,
             action,
             guix_build_dir,
+            guix_sigs_dir,
+            bitcoin_detached_sigs_dir,
+            macos_sdks_dir,
             bitcoin_dir,
         })
     }
@@ -36,13 +71,15 @@ impl Builder {
     pub fn run(&self) -> Result<()> {
         self.checkout_bitcoin()?;
         self.refresh_repos()?;
-        self.build()?;
 
         match self.action {
-            BuildAction::Build => {}
-            BuildAction::NonCodeSigned => self.attest_noncodesigned()?,
+            BuildAction::Build => self.guix_build()?,
+            BuildAction::NonCodeSigned => self.guix_attest()?,
+            BuildAction::CodeSigned => self.guix_codesign()?,
             BuildAction::All => {
-                self.codesign()?;
+                self.guix_build()?;
+                self.guix_attest()?;
+                self.guix_codesign()?;
                 self.attest_all()?;
             }
         }
@@ -58,7 +95,7 @@ impl Builder {
     }
 
     fn refresh_repos(&self) -> Result<()> {
-        info!("Refreshing repositories");
+        info!("Refreshing guix.sigs and bitcoin-detached-sigs repos");
         self.run_command(
             &self.guix_build_dir.join("guix.sigs"),
             "git",
@@ -72,14 +109,19 @@ impl Builder {
         self.run_command(
             &self.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
-            &["fetch", "origin"],
+            &["checkout", "main"],
+        )?;
+        self.run_command(
+            &self.guix_build_dir.join("bitcoin-detached-sigs"),
+            "git",
+            &["pull", "upstream", "main"],
         )?;
         Ok(())
     }
 
-    fn build(&self) -> Result<()> {
+    fn guix_build(&self) -> Result<()> {
         info!("Starting build process");
-        let mut command = Command::new(&self.bitcoin_dir.join("contrib/guix/guix-build"));
+        let mut command = Command::new(self.bitcoin_dir.join("contrib/guix/guix-build"));
         command
             .current_dir(&self.bitcoin_dir)
             .env(
@@ -93,14 +135,17 @@ impl Builder {
         Ok(())
     }
 
-    fn attest_noncodesigned(&self) -> Result<()> {
+    fn guix_attest(&self) -> Result<()> {
         info!("Attesting non-codesigned binaries");
         self.run_command_with_env(
             &self.bitcoin_dir,
             "contrib/guix/guix-attest",
             &[],
             &[
-                ("GUIX_SIGS_REPO", self.guix_build_dir.join("guix.sigs")),
+                (
+                    "GUIX_SIGS_REPO",
+                    self.guix_build_dir.join("guix.sigs").to_str().unwrap(),
+                ),
                 ("SIGNER", self.signer.as_str()),
             ],
         )?;
@@ -108,7 +153,7 @@ impl Builder {
         Ok(())
     }
 
-    fn codesign(&self) -> Result<()> {
+    fn guix_codesign(&self) -> Result<()> {
         info!("Codesigning binaries");
         self.run_command_with_env(
             &self.bitcoin_dir,
@@ -116,7 +161,10 @@ impl Builder {
             &[],
             &[(
                 "DETACHED_SIGS_REPO",
-                self.guix_build_dir.join("bitcoin-detached-sigs"),
+                self.guix_build_dir
+                    .join("bitcoin-detached-sigs")
+                    .to_str()
+                    .unwrap(),
             )],
         )?;
         Ok(())
@@ -129,7 +177,10 @@ impl Builder {
             "contrib/guix/guix-attest",
             &[],
             &[
-                ("GUIX_SIGS_REPO", self.guix_build_dir.join("guix.sigs")),
+                (
+                    "GUIX_SIGS_REPO",
+                    self.guix_build_dir.join("guix.sigs").to_str().unwrap(),
+                ),
                 ("SIGNER", self.signer.as_str()),
             ],
         )?;
@@ -156,33 +207,38 @@ impl Builder {
 
         let add_files = if attestation_type == "all" {
             vec![
-                format!("{}/$SIGNER/all.SHA256SUMS", &self.version[1..]),
-                format!("{}/$SIGNER/all.SHA256SUMS.asc", &self.version[1..]),
-                format!("{}/$SIGNER/noncodesigned.SHA256SUMS", &self.version[1..]),
+                format!("{}/{}/all.SHA256SUMS", &self.version[1..], &self.signer),
+                format!("{}/{}/all.SHA256SUMS.asc", &self.version[1..], &self.signer),
                 format!(
-                    "{}/$SIGNER/noncodesigned.SHA256SUMS.asc",
-                    &self.version[1..]
+                    "{}/{}/noncodesigned.SHA256SUMS",
+                    &self.version[1..],
+                    &self.signer
+                ),
+                format!(
+                    "{}/{}/noncodesigned.SHA256SUMS.asc",
+                    &self.version[1..],
+                    &self.signer
                 ),
             ]
         } else {
             vec![
-                format!("{}/$SIGNER/noncodesigned.SHA256SUMS", &self.version[1..]),
                 format!(
-                    "{}/$SIGNER/noncodesigned.SHA256SUMS.asc",
-                    &self.version[1..]
+                    "{}/{}/noncodesigned.SHA256SUMS",
+                    &self.version[1..],
+                    &self.signer
+                ),
+                format!(
+                    "{}/{}/noncodesigned.SHA256SUMS.asc",
+                    &self.version[1..],
+                    &self.signer
                 ),
             ]
         };
 
-        self.run_command(
-            &self.guix_build_dir.join("guix.sigs"),
-            "git",
-            &["add"]
-                .iter()
-                .chain(add_files.iter())
-                .map(AsRef::as_ref)
-                .collect::<Vec<_>>(),
-        )?;
+        let mut git_add_args = vec!["add"];
+        git_add_args.extend(add_files.iter().map(String::as_str));
+
+        self.run_command(&self.guix_build_dir.join("guix.sigs"), "git", &git_add_args)?;
 
         self.run_command(
             &self.guix_build_dir.join("guix.sigs"),
@@ -211,12 +267,12 @@ impl Builder {
         dir: &PathBuf,
         command: &str,
         args: &[&str],
-        env: &[(&str, impl AsRef<std::ffi::OsStr>)],
+        env: &[(&str, &str)],
     ) -> Result<()> {
         let status = Command::new(command)
             .current_dir(dir)
             .args(args)
-            .envs(env.iter().cloned())
+            .envs(env.iter().map(|(k, v)| (k, v.to_string())))
             .status()
             .with_context(|| format!("Failed to execute command: {} {:?}", command, args))?;
 
