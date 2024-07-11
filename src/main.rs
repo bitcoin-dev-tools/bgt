@@ -1,8 +1,10 @@
+mod builder;
 mod config;
 mod fetcher;
 mod version;
 
 use anyhow::Result;
+use builder::{BuildAction, Builder};
 use config::Config;
 use fetcher::{check_for_new_tags, fetch_all_tags};
 use log::{debug, error, info};
@@ -58,5 +60,18 @@ async fn main() -> Result<()> {
 
 fn new_tag_detected(tag: &str) {
     info!("New tag detected: {}", tag);
-    // Placeholder for guix-build logic
+
+    // Initialize and run the builder
+    match Builder::new(
+        "your_signer_name".to_string(),
+        tag.to_string(),
+        BuildAction::All,
+    ) {
+        Ok(builder) => {
+            if let Err(e) = builder.run() {
+                error!("Build process failed: {:?}", e);
+            }
+        }
+        Err(e) => error!("Failed to initialize builder: {:?}", e),
+    }
 }
