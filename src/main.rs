@@ -4,8 +4,11 @@ mod fetcher;
 mod version;
 mod xor;
 
+use std::collections::HashSet;
+
 use anyhow::Result;
 use builder::{BuildAction, Builder};
+use clap::{Parser, Subcommand};
 use config::Config;
 use env_logger::Env;
 use fetcher::{check_for_new_tags, fetch_all_tags};
@@ -14,20 +17,31 @@ use octocrab::Octocrab;
 use tokio::signal;
 use tokio::time::sleep;
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the watcher to monitor for new tags
+    Watcher,
+    /// Build a specific tag
+    Tag {
+        /// The tag to build
+        tag: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     info!("Starting BGT Builder");
+    let cli = Cli::parse();
     let config = Config::default();
-
-    info!("Creating Octocrab instance");
     let octocrab = Octocrab::builder().build()?;
-
-    // TODO: Should do a tool check here, we need:
-    // - guix
-    // - git
-    // - ??
-    // check_tools_installed();
 
     // Test init a dummy builder early to catch configuration errors
     let _ = match initialize_builder().await {
@@ -44,8 +58,24 @@ async fn main() -> Result<()> {
     // Initialize seen_tags with all existing tags
     let mut seen_tags = fetch_all_tags(&octocrab, &config).await?;
     info!("Initialized with {} existing tags", seen_tags.len());
-    // build_tag("v26.2").await;
 
+    match &cli.command {
+        Commands::Watcher => {
+            run_watcher(&config, &octocrab, &mut seen_tags).await?;
+        }
+        Commands::Tag { tag } => {
+            build_tag(tag.as_str()).await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_watcher(
+    config: &Config,
+    octocrab: &Octocrab,
+    seen_tags: &mut HashSet<String>,
+) -> Result<()> {
     loop {
         info!(
             "Polling https://github.com/{}/{} for new tags...",
@@ -53,7 +83,7 @@ async fn main() -> Result<()> {
         );
         tokio::select! {
             _ = sleep(config.poll_interval) => {
-                match check_for_new_tags(&octocrab, &mut seen_tags, &config).await {
+                match check_for_new_tags(octocrab, seen_tags, config).await {
                     Ok(new_tags) => {
                         if !new_tags.is_empty() {
                             info!("Detected {} new tags", new_tags.len());
