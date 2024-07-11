@@ -1,13 +1,11 @@
 use anyhow::Result;
-use dirs::config_dir;
 use log::{debug, info};
 use octocrab::{models::repos::Release, Octocrab};
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
 
-use crate::config::Config;
+use crate::config::{get_config_file, Config};
 use crate::version::compare_versions;
 
 /// Fetches all tags from the GitHub repository and updates the known tags file.
@@ -108,26 +106,13 @@ pub async fn check_for_new_tags(
     Ok(new_tags)
 }
 
-/// Returns the path to the configuration file.
-///
-/// # Returns
-///
-/// A PathBuf representing the path to the known_releases file.
-fn get_config_file_path() -> PathBuf {
-    let mut path = config_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("bgt");
-    std::fs::create_dir_all(&path).expect("Failed to create config directory");
-    path.push("known_releases");
-    path
-}
-
 /// Reads known tags from the configuration file.
 ///
 /// # Returns
 ///
 /// A Result containing a HashSet of known tags, or an error if the file couldn't be read.
 fn read_known_tags() -> Result<HashSet<String>> {
-    let path = get_config_file_path();
+    let path = get_config_file("known_releases");
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let tags: HashSet<String> = reader.lines().map_while(Result::ok).collect();
@@ -144,7 +129,7 @@ fn read_known_tags() -> Result<HashSet<String>> {
 ///
 /// A Result indicating success or failure of the write operation.
 fn write_known_tags(tags: &HashSet<String>) -> Result<()> {
-    let path = get_config_file_path();
+    let path = get_config_file("known-releases");
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)

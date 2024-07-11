@@ -2,6 +2,7 @@ mod builder;
 mod config;
 mod fetcher;
 mod version;
+mod wizard;
 mod xor;
 
 use std::collections::HashSet;
@@ -16,6 +17,7 @@ use log::{debug, error, info};
 use octocrab::Octocrab;
 use tokio::signal;
 use tokio::time::sleep;
+use wizard::init_wizard;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -33,6 +35,8 @@ enum Commands {
         /// The tag to build
         tag: String,
     },
+    /// Configure a few settings and write them to a config file
+    Init,
 }
 
 #[tokio::main]
@@ -40,20 +44,38 @@ async fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     info!("Starting BGT Builder");
     let cli = Cli::parse();
-    let config = Config::default();
+
+    // Try to load the config file
+    let config = match Config::load() {
+        Ok(config) => config,
+        Err(e) => {
+            if let Commands::Init = cli.command {
+                // If the command is Init, we don't need the config yet
+                Config::default()
+            } else {
+                error!("Failed to load config: {}. Please run 'bgt init' to set up your configuration.", e);
+                return Err(anyhow::anyhow!("Config not properly set up"));
+            }
+        }
+    };
+
     let octocrab = Octocrab::builder().build()?;
 
     // Test init a dummy builder early to catch configuration errors
-    let _ = match initialize_builder().await {
-        Ok(b) => {
-            info!("Builder initialized successfully:\n{}", b);
-            b
-        }
-        Err(e) => {
-            error!("Failed to initialize builder: {:?}", e);
-            return Err(e);
-        }
-    };
+    if let Commands::Init = cli.command {
+        // Skip builder initialization for Init command
+    } else {
+        let _ = match initialize_builder(&config).await {
+            Ok(b) => {
+                info!("Builder initialized successfully:\n{}", b);
+                b
+            }
+            Err(e) => {
+                error!("Failed to initialize builder: {:?}", e);
+                return Err(e);
+            }
+        };
+    }
 
     // Initialize seen_tags with all existing tags
     let mut seen_tags = fetch_all_tags(&octocrab, &config).await?;
@@ -64,7 +86,10 @@ async fn main() -> Result<()> {
             run_watcher(&config, &octocrab, &mut seen_tags).await?;
         }
         Commands::Tag { tag } => {
-            build_tag(tag.as_str()).await;
+            build_tag(tag.as_str(), &config).await;
+        }
+        Commands::Init => {
+            init_wizard().await?;
         }
     }
 
@@ -89,7 +114,7 @@ async fn run_watcher(
                             info!("Detected {} new tags", new_tags.len());
                             for tag in new_tags {
                                 info!("Building tag {}", tag);
-                                build_tag(&tag).await;
+                                build_tag(&tag, config).await;
                             }
                         } else {
                             debug!("No new tags detected.");
@@ -110,12 +135,17 @@ async fn run_watcher(
     Ok(())
 }
 
-async fn build_tag(tag: &str) {
+async fn build_tag(tag: &str, config: &Config) {
     info!("New tag detected and being built: {}", tag);
 
     // Create a new Builder instance with the tag to operate on
-    let tag_builder = Builder::new(tag.to_string(), BuildAction::Build)
-        .expect("Failed to create new Builder instance");
+    let tag_builder = Builder::new(
+        tag.to_string(),
+        BuildAction::Build,
+        config.signer.clone(),
+        config.guix_sigs_fork.clone(),
+    )
+    .expect("Failed to create new Builder instance");
 
     info!("Using builder for tag {}:\n{}", tag, tag_builder);
     if let Err(e) = tag_builder.run().await {
@@ -123,8 +153,13 @@ async fn build_tag(tag: &str) {
     }
 }
 
-async fn initialize_builder() -> Result<Builder> {
-    let builder = Builder::new(String::new(), BuildAction::Setup)?;
+async fn initialize_builder(config: &Config) -> Result<Builder> {
+    let builder = Builder::new(
+        String::new(),
+        BuildAction::Setup,
+        config.signer.clone(),
+        config.guix_sigs_fork.clone(),
+    )?;
     builder.init().await?;
     Ok(builder)
 }

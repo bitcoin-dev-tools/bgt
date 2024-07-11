@@ -1,20 +1,14 @@
 use anyhow::{Context, Result};
 use dirs::state_dir;
 use flate2::read::GzDecoder;
-use log::debug;
-use log::{error, info};
-use reqwest;
-use std::env;
+use log::{debug, info};
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 use tar::Archive;
 use tokio::io::AsyncWriteExt;
-use tokio::time::timeout;
 
 use crate::xor::xor_decrypt;
 
@@ -37,6 +31,7 @@ pub struct Builder {
     action: BuildAction,
     guix_build_dir: PathBuf,
     guix_sigs_dir: PathBuf,
+    guix_sigs_fork_url: String,
     bitcoin_detached_sigs_dir: PathBuf,
     macos_sdks_dir: PathBuf,
     bitcoin_dir: PathBuf,
@@ -50,6 +45,7 @@ impl fmt::Display for Builder {
         writeln!(f, "  action: {:?}", self.action)?;
         writeln!(f, "  guix_build_dir: {:?}", self.guix_build_dir)?;
         writeln!(f, "  guix_sigs_dir: {:?}", self.guix_sigs_dir)?;
+        writeln!(f, "  guix_sigs_fork_url: {:?}", self.guix_sigs_fork_url)?;
         writeln!(
             f,
             "  bitcoin_detached_sigs_dir: {:?}",
@@ -62,9 +58,12 @@ impl fmt::Display for Builder {
 }
 
 impl Builder {
-    pub fn new(version: String, action: BuildAction) -> Result<Self> {
-        let signer = env::var("SIGNER").context("SIGNER environment variable not set")?;
-        // let signer_key = env::var("SIGNER_KEY").unwrap_or_else(|_| signer.clone());
+    pub fn new(
+        version: String,
+        action: BuildAction,
+        signer: String,
+        guix_sigs_fork_url: String,
+    ) -> Result<Self> {
         let state = state_dir().context("Failed to get a state dir")?;
         let guix_build_dir = PathBuf::from(&state).join("guix-builds");
         let bitcoin_dir = guix_build_dir.join("bitcoin");
@@ -74,11 +73,11 @@ impl Builder {
 
         Ok(Self {
             signer,
-            // signer_key,
             version,
             action,
             guix_build_dir,
             guix_sigs_dir,
+            guix_sigs_fork_url,
             bitcoin_detached_sigs_dir,
             macos_sdks_dir,
             bitcoin_dir,
@@ -147,26 +146,17 @@ impl Builder {
                 ],
             )?;
 
-            error!("Cloned guix.sigs repository into {:?}, but you must set the `origin` remote to your fork", self.guix_sigs_dir);
-
-            // Ask for user input with a 5-minute timeout
-            let origin_url = match timeout(Duration::from_secs(300), get_origin_input()).await {
-                Ok(Ok(url)) => url,
-                Ok(Err(e)) => return Err(anyhow::anyhow!("Error getting user input: {}", e)),
-                Err(_) => {
-                    error!("Timeout waiting for user input");
-                    return Err(anyhow::anyhow!("Cannot continue without an `origin` remote set in the guix.sigs repository"));
-                }
-            };
-
             // Set the origin remote
             self.run_command(
                 &self.guix_sigs_dir,
                 "git",
-                &["remote", "add", "origin", &origin_url],
+                &["remote", "add", "origin", &self.guix_sigs_fork_url],
             )?;
 
-            info!("Set origin remote to: {}", origin_url);
+            info!(
+                "Set origin remote of the guix sigs repo to: {}",
+                &self.guix_sigs_fork_url
+            );
         }
 
         Ok(())
@@ -255,7 +245,18 @@ impl Builder {
 
     fn checkout_bitcoin(&self) -> Result<()> {
         info!("Checking out Bitcoin version {}", self.version);
-        self.run_command(&self.bitcoin_dir, "git", &["fetch", "--tags"])?;
+        self.run_command(
+            &self.bitcoin_dir,
+            "git",
+            &[
+                "fetch",
+                "origin",
+                "tag",
+                &self.version,
+                "--no-tags",
+                "--depth=1",
+            ],
+        )?;
         self.run_command(&self.bitcoin_dir, "git", &["checkout", &self.version])?;
         Ok(())
     }
@@ -492,12 +493,4 @@ impl Builder {
 
         Ok(())
     }
-}
-
-async fn get_origin_input() -> Result<String> {
-    print!("Enter the URL for your guix.sigs fork: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
 }
