@@ -67,10 +67,7 @@ impl Builder {
         // let signer_key = env::var("SIGNER_KEY").unwrap_or_else(|_| signer.clone());
         let state = state_dir().context("Failed to get a state dir")?;
         let guix_build_dir = PathBuf::from(&state).join("guix-builds");
-        let bitcoin_dir = PathBuf::from(
-            env::var("BITCOIN_SOURCE_DIR")
-                .expect("Failed to get BITCOIN_SOURCE_DIR environment variable"),
-        );
+        let bitcoin_dir = guix_build_dir.join("bitcoin");
         let guix_sigs_dir = guix_build_dir.join("guix.sigs");
         let bitcoin_detached_sigs_dir = guix_build_dir.join("bitcoin-detached-sigs");
         let macos_sdks_dir = guix_build_dir.join("macos-sdks");
@@ -93,6 +90,22 @@ impl Builder {
         if !self.guix_build_dir.exists() {
             info!("Creating guix_build_dir: {:?}", self.guix_build_dir);
             fs::create_dir_all(&self.guix_build_dir).context("Failed to create guix_build_dir")?;
+        }
+
+        // Clone bitcoin/bitcoin if it doesn't exist
+        if !self.bitcoin_dir.exists() {
+            info!("Cloning bitcoin repository");
+            self.run_command(
+                &self.guix_build_dir,
+                "git",
+                &[
+                    "clone",
+                    "--depth",
+                    "1",
+                    "https://github.com/bitcoin/bitcoin",
+                    self.bitcoin_dir.file_name().unwrap().to_str().unwrap(),
+                ],
+            )?;
         }
 
         // Clone bitcoin-detached-sigs if it doesn't exist
@@ -242,7 +255,7 @@ impl Builder {
 
     fn checkout_bitcoin(&self) -> Result<()> {
         info!("Checking out Bitcoin version {}", self.version);
-        self.run_command(&self.bitcoin_dir, "git", &["fetch", "upstream"])?;
+        self.run_command(&self.bitcoin_dir, "git", &["fetch", "--tags"])?;
         self.run_command(&self.bitcoin_dir, "git", &["checkout", &self.version])?;
         Ok(())
     }

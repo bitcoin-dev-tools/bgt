@@ -12,7 +12,7 @@ Perform automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/c
 git clone https://github.com/bitcoin-dev-tools/bgt-builder.git
 cd bgt-builder
 # to run a build for v27.1 only
-BITCOIN_SOURCE_DIR="$HOME/src/bitcoin" SIGNER=<your-pgp-key-name> cargo run -- tag v27.1
+SIGNER=<your-pgp-key-name> cargo run -- tag v27.1
 ```
 
 ## Plans
