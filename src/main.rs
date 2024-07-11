@@ -23,25 +23,35 @@ use wizard::init_wizard;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Use `JOBS=1 ADDITIONAL_GUIX_COMMON_FLAGS='--max-jobs=8'`
+    #[arg(long)]
+    multi_package: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Configure a few settings and write them to a config file
+    /// Configure settings and write them to a config file
     Init,
     /// Build a specific tag
     Build {
         /// The tag to build
         tag: String,
     },
+    /// Attest to non-codesigned build outputs
     Attest {
         /// The tag to attest to
         tag: String,
-        #[command(subcommand)]
-        attest_type: AttestType,
+    },
+    /// Attach codesignatures to existing non-codesigned outputs and attest
+    Codesign {
+        /// The tag to codesign
+        tag: String,
     },
     /// Run a continuous watcher to monitor for new tags and automatically build them
     Watch,
+    /// Clean up guix build directories leaving caches intact
+    Clean,
 }
 
 #[derive(Subcommand)]
@@ -59,7 +69,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Try to load the config file
-    let config = match Config::load() {
+    let mut config = match Config::load() {
         Ok(config) => config,
         Err(e) => {
             if let Commands::Init = cli.command {
@@ -71,6 +81,9 @@ async fn main() -> Result<()> {
             }
         }
     };
+    if cli.multi_package {
+        config.multi_package = true;
+    }
 
     match &cli.command {
         Commands::Init => {
@@ -80,22 +93,23 @@ async fn main() -> Result<()> {
             initialize_builder(&config).await?;
             build_tag(tag.as_str(), &config).await;
         }
-        Commands::Attest { tag, attest_type } => match attest_type {
-            AttestType::Noncodesigned => {
-                info!("Performing non-code signed attestation for tag: {}", tag);
-                non_codesigned(tag, &config).await
-            }
-            AttestType::Codesigned => {
-                info!("Performing code signed attestation for tag: {}", tag);
-                unimplemented!();
-            }
-        },
+        Commands::Attest { tag } => {
+            info!("Performing non code-signed attestation for tag: {}", tag);
+            non_codesigned(tag, &config).await;
+        }
+        Commands::Codesign { tag } => {
+            info!("Performing code-signed attestation for tag: {}", tag);
+            codesigned(tag, &config).await;
+        }
         Commands::Watch => {
             // Initialize seen_tags with all existing tags
             let mut seen_tags = fetch_all_tags(&config).await?;
             info!("Initialized with {} existing tags", seen_tags.len());
             initialize_builder(&config).await?;
             run_watcher(&config, &mut seen_tags).await?;
+        }
+        Commands::Clean => {
+            unimplemented!();
         }
     }
 
@@ -145,13 +159,8 @@ async fn build_tag(tag: &str, config: &Config) {
     );
 
     // Create a new Builder instance with the tag to operate on
-    let tag_builder = Builder::new(
-        tag.to_string(),
-        action,
-        config.signer.clone(),
-        config.guix_sigs_fork.clone(),
-    )
-    .expect("Failed to create new Builder instance");
+    let tag_builder = Builder::new(tag.to_string(), action, config.clone())
+        .expect("Failed to create new Builder instance");
 
     info!("Using builder for tag {}:\n{}", tag, tag_builder);
     if let Err(e) = tag_builder.run().await {
@@ -167,13 +176,24 @@ async fn non_codesigned(tag: &str, config: &Config) {
     );
 
     // Create a new Builder instance with the tag to operate on
-    let tag_builder = Builder::new(
-        tag.to_string(),
-        action,
-        config.signer.clone(),
-        config.guix_sigs_fork.clone(),
-    )
-    .expect("Failed to create new Builder instance");
+    let tag_builder = Builder::new(tag.to_string(), action, config.clone())
+        .expect("Failed to create new Builder instance");
+
+    if let Err(e) = tag_builder.run().await {
+        error!("Build process for tag {} failed: {:?}", tag, e);
+    }
+}
+
+async fn codesigned(tag: &str, config: &Config) {
+    let action = BuildAction::CodeSigned;
+    info!(
+        "Creating a builder for tag {} and BuildAction {:?}",
+        tag, action
+    );
+
+    // Create a new Builder instance with the tag to operate on
+    let tag_builder = Builder::new(tag.to_string(), action, config.clone())
+        .expect("Failed to create new Builder instance");
 
     if let Err(e) = tag_builder.run().await {
         error!("Build process for tag {} failed: {:?}", tag, e);
@@ -181,12 +201,7 @@ async fn non_codesigned(tag: &str, config: &Config) {
 }
 
 async fn initialize_builder(config: &Config) -> Result<Builder> {
-    let builder = Builder::new(
-        String::new(),
-        BuildAction::Setup,
-        config.signer.clone(),
-        config.guix_sigs_fork.clone(),
-    )?;
+    let builder = Builder::new(String::new(), BuildAction::Setup, config.clone())?;
     builder.init().await?;
     Ok(builder)
 }

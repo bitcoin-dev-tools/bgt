@@ -5,14 +5,19 @@ use toml::Table;
 use crate::config::get_config_file;
 
 pub(crate) async fn init_wizard() -> Result<()> {
-    println!("Welcome to the BGT Builder initialization wizard!");
+    println!("Welcome to the bgt config wizard!");
     println!("Please provide the following information:");
 
     let mut config = Table::new();
 
-    // Prompt for SIGNER
-    let signer = prompt_input("Enter your signer name")?;
-    config.insert("SIGNER".to_string(), toml::Value::String(signer));
+    // Prompt for SIGNER gpg key
+    let gpg_key = prompt_input("Enter your gpg key fingerprint")?;
+    config.insert("GPG_KEY_ID".to_string(), toml::Value::String(gpg_key));
+    // TODO: Check that gpg key can be found
+
+    // Prompt for SIGNER name
+    let signer_name = prompt_input("Enter your signer name")?;
+    config.insert("SIGNER_NAME".to_string(), toml::Value::String(signer_name));
 
     // Prompt for GUIX_SIGS_FORK
     let guix_sigs_fork = prompt_input("Enter the URL of your guix.sigs fork")?;

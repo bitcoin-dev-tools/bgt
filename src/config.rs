@@ -3,12 +3,15 @@ use dirs::config_dir;
 use std::{path::PathBuf, time::Duration};
 use toml::Table;
 
+#[derive(Clone)]
 pub struct Config {
     pub repo_owner: String,
     pub repo_name: String,
     pub poll_interval: Duration,
-    pub signer: String,
-    pub guix_sigs_fork: String,
+    pub signer_name: String,
+    pub gpg_key_id: String,
+    pub guix_sigs_fork_url: String,
+    pub multi_package: bool,
 }
 
 impl Default for Config {
@@ -17,8 +20,10 @@ impl Default for Config {
             repo_owner: "bitcoin".to_string(),
             repo_name: "bitcoin".to_string(),
             poll_interval: Duration::from_secs(60),
-            signer: String::new(),
-            guix_sigs_fork: String::new(),
+            signer_name: String::new(),
+            gpg_key_id: String::new(),
+            guix_sigs_fork_url: String::new(),
+            multi_package: false,
         }
     }
 }
@@ -34,14 +39,19 @@ impl Config {
             repo_owner: "bitcoin".to_string(),
             repo_name: "bitcoin".to_string(),
             poll_interval: Duration::from_secs(60),
-            signer: parsed_config["SIGNER"]
+            signer_name: parsed_config["SIGNER_NAME"]
                 .as_str()
-                .context("SIGNER not found in config")?
+                .context("SIGNER_NAME not found in config")?
                 .to_string(),
-            guix_sigs_fork: parsed_config["GUIX_SIGS_FORK"]
+            gpg_key_id: parsed_config["GPG_KEY_ID"]
+                .as_str()
+                .context("GPG_KEY_ID not found in config")?
+                .to_string(),
+            guix_sigs_fork_url: parsed_config["GUIX_SIGS_FORK"]
                 .as_str()
                 .context("GUIX_SIGS_FORK not found in config")?
                 .to_string(),
+            multi_package: false,
         })
     }
 }
