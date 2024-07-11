@@ -31,3 +31,4 @@ cargo run watcher
 - [x] permit building a specified tag
 - [ ] enable signing
 - [ ] add advanced GPG signing solutions (tbd)
+- [ ] remove some dependencies

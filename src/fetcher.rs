@@ -1,12 +1,18 @@
 use anyhow::Result;
 use log::{debug, info};
-use octocrab::{models::repos::Release, Octocrab};
+use reqwest::Client;
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 
 use crate::config::{get_config_file, Config};
 use crate::version::compare_versions;
+
+#[derive(Deserialize)]
+struct Release {
+    tag_name: String,
+}
 
 /// Fetches all tags from the GitHub repository and updates the known tags file.
 ///
@@ -18,7 +24,7 @@ use crate::version::compare_versions;
 /// # Returns
 ///
 /// A Result containing a HashSet of all known tags, or an error if the fetch failed.
-pub async fn fetch_all_tags(octocrab: &Octocrab, config: &Config) -> Result<HashSet<String>> {
+pub async fn fetch_all_tags(config: &Config) -> Result<HashSet<String>> {
     info!("Reading existing known tags from file...");
     let mut existing_tags = read_known_tags().unwrap_or_else(|_| {
         info!("No existing tags file found, starting fresh.");
@@ -30,15 +36,20 @@ pub async fn fetch_all_tags(octocrab: &Octocrab, config: &Config) -> Result<Hash
         "Fetching all releases from {}/{} repository...",
         config.repo_owner, config.repo_name
     );
-    let releases: Vec<Release> = octocrab
-        .repos(&config.repo_owner, &config.repo_name)
-        .releases()
-        .list()
-        .per_page(100)
-        .page(1u32)
+
+    let client = Client::new();
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases?per_page=100",
+        config.repo_owner, config.repo_name
+    );
+
+    let releases: Vec<Release> = client
+        .get(&url)
+        .header("User-Agent", "BGT-Builder")
         .send()
         .await?
-        .items;
+        .json()
+        .await?;
 
     let mut new_tags = Vec::new();
     for release in releases {
@@ -77,19 +88,22 @@ pub async fn fetch_all_tags(octocrab: &Octocrab, config: &Config) -> Result<Hash
 ///
 /// A Result containing a Vector of new tags, or an error if the check failed.
 pub async fn check_for_new_tags(
-    octocrab: &Octocrab,
     seen_tags: &mut HashSet<String>,
     config: &Config,
 ) -> Result<Vec<String>> {
-    let releases: Vec<Release> = octocrab
-        .repos(&config.repo_owner, &config.repo_name)
-        .releases()
-        .list()
-        .per_page(100)
-        .page(1u32)
+    let client = Client::new();
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases?per_page=100",
+        config.repo_owner, config.repo_name
+    );
+
+    let releases: Vec<Release> = client
+        .get(&url)
+        .header("User-Agent", "BGT-Builder")
         .send()
         .await?
-        .items;
+        .json()
+        .await?;
 
     info!("Fetched {} releases", releases.len());
 

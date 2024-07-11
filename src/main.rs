@@ -14,7 +14,6 @@ use config::Config;
 use env_logger::Env;
 use fetcher::{check_for_new_tags, fetch_all_tags};
 use log::{debug, error, info};
-use octocrab::Octocrab;
 use tokio::signal;
 use tokio::time::sleep;
 use wizard::init_wizard;
@@ -59,15 +58,13 @@ async fn main() -> Result<()> {
         }
     };
 
-    let octocrab = Octocrab::builder().build()?;
-
     match &cli.command {
         Commands::Watcher => {
             // Initialize seen_tags with all existing tags
-            let mut seen_tags = fetch_all_tags(&octocrab, &config).await?;
+            let mut seen_tags = fetch_all_tags(&config).await?;
             info!("Initialized with {} existing tags", seen_tags.len());
             initialize_builder(&config).await?;
-            run_watcher(&config, &octocrab, &mut seen_tags).await?;
+            run_watcher(&config, &mut seen_tags).await?;
         }
         Commands::Tag { tag } => {
             initialize_builder(&config).await?;
@@ -81,11 +78,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_watcher(
-    config: &Config,
-    octocrab: &Octocrab,
-    seen_tags: &mut HashSet<String>,
-) -> Result<()> {
+async fn run_watcher(config: &Config, seen_tags: &mut HashSet<String>) -> Result<()> {
     loop {
         info!(
             "Polling https://github.com/{}/{} for new tags...",
@@ -93,7 +86,7 @@ async fn run_watcher(
         );
         tokio::select! {
             _ = sleep(config.poll_interval) => {
-                match check_for_new_tags(octocrab, seen_tags, config).await {
+                match check_for_new_tags(seen_tags, config).await {
                     Ok(new_tags) => {
                         if !new_tags.is_empty() {
                             info!("Detected {} new tags", new_tags.len());
