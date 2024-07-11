@@ -27,15 +27,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run the watcher to monitor for new tags
-    Watcher,
+    /// Configure a few settings and write them to a config file
+    Init,
     /// Build a specific tag
-    Tag {
+    Build {
         /// The tag to build
         tag: String,
     },
-    /// Configure a few settings and write them to a config file
-    Init,
+    Attest {
+        /// The tag to attest to
+        tag: String,
+        #[command(subcommand)]
+        attest_type: AttestType,
+    },
+    /// Run a continuous watcher to monitor for new tags and automatically build them
+    Watch,
+}
+
+#[derive(Subcommand)]
+enum AttestType {
+    /// Attest without code signing
+    Noncodesigned,
+    /// Attest with code signing
+    Codesigned,
 }
 
 #[tokio::main]
@@ -59,19 +73,29 @@ async fn main() -> Result<()> {
     };
 
     match &cli.command {
-        Commands::Watcher => {
+        Commands::Init => {
+            init_wizard().await?;
+        }
+        Commands::Build { tag } => {
+            initialize_builder(&config).await?;
+            build_tag(tag.as_str(), &config).await;
+        }
+        Commands::Attest { tag, attest_type } => match attest_type {
+            AttestType::Noncodesigned => {
+                info!("Performing non-code signed attestation for tag: {}", tag);
+                non_codesigned(tag, &config).await
+            }
+            AttestType::Codesigned => {
+                info!("Performing code signed attestation for tag: {}", tag);
+                unimplemented!();
+            }
+        },
+        Commands::Watch => {
             // Initialize seen_tags with all existing tags
             let mut seen_tags = fetch_all_tags(&config).await?;
             info!("Initialized with {} existing tags", seen_tags.len());
             initialize_builder(&config).await?;
             run_watcher(&config, &mut seen_tags).await?;
-        }
-        Commands::Tag { tag } => {
-            initialize_builder(&config).await?;
-            build_tag(tag.as_str(), &config).await;
-        }
-        Commands::Init => {
-            init_wizard().await?;
         }
     }
 
@@ -81,8 +105,8 @@ async fn main() -> Result<()> {
 async fn run_watcher(config: &Config, seen_tags: &mut HashSet<String>) -> Result<()> {
     loop {
         info!(
-            "Polling https://github.com/{}/{} for new tags...",
-            config.repo_owner, config.repo_name
+            "Polling https://github.com/{}/{} for new tags every {:?}s...",
+            config.repo_owner, config.repo_name, config.poll_interval
         );
         tokio::select! {
             _ = sleep(config.poll_interval) => {
@@ -114,18 +138,43 @@ async fn run_watcher(config: &Config, seen_tags: &mut HashSet<String>) -> Result
 }
 
 async fn build_tag(tag: &str, config: &Config) {
-    info!("New tag detected and being built: {}", tag);
+    let action = BuildAction::Build;
+    info!(
+        "Creating a builder for tag {} and BuildAction {:?}",
+        tag, action
+    );
 
     // Create a new Builder instance with the tag to operate on
     let tag_builder = Builder::new(
         tag.to_string(),
-        BuildAction::Build,
+        action,
         config.signer.clone(),
         config.guix_sigs_fork.clone(),
     )
     .expect("Failed to create new Builder instance");
 
     info!("Using builder for tag {}:\n{}", tag, tag_builder);
+    if let Err(e) = tag_builder.run().await {
+        error!("Build process for tag {} failed: {:?}", tag, e);
+    }
+}
+
+async fn non_codesigned(tag: &str, config: &Config) {
+    let action = BuildAction::NonCodeSigned;
+    info!(
+        "Creating a builder for tag {} and BuildAction {:?}",
+        tag, action
+    );
+
+    // Create a new Builder instance with the tag to operate on
+    let tag_builder = Builder::new(
+        tag.to_string(),
+        action,
+        config.signer.clone(),
+        config.guix_sigs_fork.clone(),
+    )
+    .expect("Failed to create new Builder instance");
+
     if let Err(e) = tag_builder.run().await {
         error!("Build process for tag {} failed: {:?}", tag, e);
     }
