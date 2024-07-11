@@ -61,31 +61,16 @@ async fn main() -> Result<()> {
 
     let octocrab = Octocrab::builder().build()?;
 
-    // Test init a dummy builder early to catch configuration errors
-    if let Commands::Init = cli.command {
-        // Skip builder initialization for Init command
-    } else {
-        let _ = match initialize_builder(&config).await {
-            Ok(b) => {
-                info!("Builder initialized successfully:\n{}", b);
-                b
-            }
-            Err(e) => {
-                error!("Failed to initialize builder: {:?}", e);
-                return Err(e);
-            }
-        };
-    }
-
-    // Initialize seen_tags with all existing tags
-    let mut seen_tags = fetch_all_tags(&octocrab, &config).await?;
-    info!("Initialized with {} existing tags", seen_tags.len());
-
     match &cli.command {
         Commands::Watcher => {
+            // Initialize seen_tags with all existing tags
+            let mut seen_tags = fetch_all_tags(&octocrab, &config).await?;
+            info!("Initialized with {} existing tags", seen_tags.len());
+            initialize_builder(&config).await?;
             run_watcher(&config, &octocrab, &mut seen_tags).await?;
         }
         Commands::Tag { tag } => {
+            initialize_builder(&config).await?;
             build_tag(tag.as_str(), &config).await;
         }
         Commands::Init => {

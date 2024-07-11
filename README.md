@@ -11,12 +11,23 @@ Perform automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/c
 ```bash
 git clone https://github.com/bitcoin-dev-tools/bgt-builder.git
 cd bgt-builder
-# to run a build for v27.1 only
-SIGNER=<your-pgp-key-name> cargo run -- tag v27.1
+
+# Run setup wizard
+cargo run init
+
+# Build a specific tag
+cargo run tag v27.1
+
+# Enable debug logging
+RUST_LOG=debug cargo run tag v26.2
+
+# Run a watcher to auto-build new tags pushed to GH
+cargo run watcher
 ```
 
 ## Plans
 
 - [x] implement Guix building
-- [ ] permit building a specified tag
+- [x] permit building a specified tag
+- [ ] enable signing
 - [ ] add advanced GPG signing solutions (tbd)
