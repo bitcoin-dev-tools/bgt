@@ -447,6 +447,15 @@ impl Builder {
             .stderr(Stdio::piped());
         self.run_command_with_output(command)?;
 
+        // Echo the sigs
+        let mut command = Command::new("cat");
+        command
+            .current_dir(&self.guix_build_dir.join("guix.sigs"))
+            .args(add_files.iter().map(String::as_str))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        self.run_command_with_output(command)?;
+
         // Commit changes
         let mut command = Command::new("git");
         command
