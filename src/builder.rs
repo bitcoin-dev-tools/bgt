@@ -225,10 +225,10 @@ impl Builder {
         match self.action {
             BuildAction::Setup => {}
             BuildAction::Build => {
-                self.guix_build()?;
                 self.checkout_bitcoin()?;
                 self.refresh_repos()?;
                 self.check_sdk().await?;
+                self.guix_build()?;
             }
             BuildAction::NonCodeSigned => self.guix_attest("non-codesigned")?,
             BuildAction::CodeSigned => {
