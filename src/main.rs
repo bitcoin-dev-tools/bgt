@@ -31,8 +31,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Configure settings and write them to a config file
-    Init,
+    /// Run the setup wizard
+    Wizard,
     /// Build a specific tag
     Build {
         /// The tag to build
@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
     let mut config = match Config::load() {
         Ok(config) => config,
         Err(e) => {
-            if let Commands::Init = cli.command {
+            if let Commands::Wizard = cli.command {
                 // If the command is Init, we don't need the config yet
                 Config::default()
             } else {
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     }
 
     match &cli.command {
-        Commands::Init => {
+        Commands::Wizard => {
             init_wizard().await?;
         }
         Commands::Build { tag } => {

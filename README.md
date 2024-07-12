@@ -13,7 +13,7 @@ git clone https://github.com/bitcoin-dev-tools/bgt-builder.git
 cd bgt-builder
 
 # Run setup wizard
-cargo run init
+cargo run wizard
 
 # Build a specific tag
 cargo run build v27.1
