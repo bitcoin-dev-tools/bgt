@@ -222,11 +222,11 @@ impl Builder {
     }
 
     pub async fn run(&self) -> Result<()> {
+        self.refresh_repos()?;
+        self.checkout_bitcoin()?;
         match self.action {
             BuildAction::Setup => {}
             BuildAction::Build => {
-                self.checkout_bitcoin()?;
-                self.refresh_repos()?;
                 self.check_sdk().await?;
                 self.guix_build()?;
             }
