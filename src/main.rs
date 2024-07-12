@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use config::Config;
 use env_logger::Env;
 use fetcher::{check_for_new_tags, fetch_all_tags};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tokio::signal;
 use tokio::time::sleep;
 use wizard::init_wizard;
@@ -94,19 +94,15 @@ async fn main() -> Result<()> {
             build_tag(tag.as_str(), &config).await;
         }
         Commands::Attest { tag } => {
-            info!("Performing non code-signed attestation for tag: {}", tag);
             non_codesigned(tag, &config).await;
         }
         Commands::Codesign { tag } => {
-            info!("Performing code-signed attestation for tag: {}", tag);
             codesigned(tag, &config).await;
         }
         Commands::Watch => {
-            // Initialize seen_tags with all existing tags
-            let mut seen_tags = fetch_all_tags(&config).await?;
-            info!("Initialized with {} existing tags", seen_tags.len());
+            let (mut seen_tags_bitcoin, mut seen_tags_sigs) = fetch_all_tags(&config).await?;
             initialize_builder(&config).await?;
-            run_watcher(&config, &mut seen_tags).await?;
+            run_watcher(&config, &mut seen_tags_bitcoin, &mut seen_tags_sigs).await?;
         }
         Commands::Clean => {
             let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())?;
@@ -117,28 +113,59 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_watcher(config: &Config, seen_tags: &mut HashSet<String>) -> Result<()> {
+async fn run_watcher(
+    config: &Config,
+    seen_tags_bitcoin: &mut HashSet<String>,
+    seen_tags_sigs: &mut HashSet<String>,
+) -> Result<()> {
+    let mut in_progress: HashSet<String> = HashSet::new();
     loop {
         info!(
-            "Polling https://github.com/{}/{} for new tags every {:?}s...",
+            "Polling https://github.com/{}/{} for new tags every {:?}...",
             config.repo_owner, config.repo_name, config.poll_interval
         );
         tokio::select! {
             _ = sleep(config.poll_interval) => {
-                match check_for_new_tags(seen_tags, config).await {
+                match check_for_new_tags(seen_tags_bitcoin, &config.repo_owner, &config.repo_name).await {
                     Ok(new_tags) => {
                         if !new_tags.is_empty() {
-                            info!("Detected {} new tags", new_tags.len());
+                            info!("Detected {} new tags for {}/{}", new_tags.len(), &config.repo_owner, &config.repo_name);
                             for tag in new_tags {
-                                info!("Building tag {}", tag);
+                                in_progress.insert(tag.clone());
                                 build_tag(&tag, config).await;
+                                non_codesigned(&tag, config).await;
                             }
                         } else {
-                            debug!("No new tags detected.");
+                            debug!("No new tags for {}/{} found", &config.repo_owner, &config.repo_name);
                         }
                     }
                     Err(e) => {
-                        error!("Error checking for new tags: {:?}", e);
+                        error!("Error checking for new tags in {}: {:?}", &config.repo_name, e);
+                    }
+                }
+            }
+            _ = sleep(config.poll_interval) => {
+                match check_for_new_tags(seen_tags_sigs, &config.repo_owner_detached, &config.repo_name_detached).await {
+                    Ok(new_tags) => {
+                        if !new_tags.is_empty() {
+                            info!("Detected {} new tags for {}/{}", new_tags.len(), &config.repo_owner_detached, &config.repo_name_detached);
+                            for tag in new_tags {
+                                if in_progress.contains(&tag) {
+                                    codesigned(&tag, config).await;
+                                    in_progress.remove(&tag);
+                                } else {
+                                    // TODO: I think here we could probably try codesigning first,
+                                    // in case we are out of sync with in_progress, and warn if we
+                                    // catch an error?
+                                    warn!("New tag detected in {}/{} was in-progress (already build and non-codesigned) and so cannot be automatically codesigned", &config.repo_owner_detached, &config.repo_name_detached);
+                                }
+                            }
+                        } else {
+                            debug!("No new tags for {}/{} found", &config.repo_owner_detached, &config.repo_name_detached);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error checking for new tags in {}: {:?}", &config.repo_name_detached, e);
                     }
                 }
             }
@@ -153,6 +180,7 @@ async fn run_watcher(config: &Config, seen_tags: &mut HashSet<String>) -> Result
 }
 
 async fn build_tag(tag: &str, config: &Config) {
+    info!("Building tag {}", tag);
     let action = BuildAction::Build;
     info!(
         "Creating a builder for tag {} and BuildAction {:?}",
@@ -170,6 +198,7 @@ async fn build_tag(tag: &str, config: &Config) {
 }
 
 async fn non_codesigned(tag: &str, config: &Config) {
+    info!("Attesting to non-codesigned tag {}", tag);
     let action = BuildAction::NonCodeSigned;
     info!(
         "Creating a builder for tag {} and BuildAction {:?}",
@@ -186,6 +215,7 @@ async fn non_codesigned(tag: &str, config: &Config) {
 }
 
 async fn codesigned(tag: &str, config: &Config) {
+    info!("Codesigning tag {}", tag);
     let action = BuildAction::CodeSigned;
     info!(
         "Creating a builder for tag {} and BuildAction {:?}",

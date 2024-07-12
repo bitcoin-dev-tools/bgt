@@ -25,8 +25,8 @@ cargo run attest v27.1
 cargo run codesign v27.1
 
 # Run a watcher to auto-build new tags pushed to GH
-# Not yet implemented
-cargo run watcher
+# This will also attest, and watch for detached sigs, before codesigning
+cargo run watch
 
 # Clean directories leaving cache intact
 cargo run clean

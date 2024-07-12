@@ -7,6 +7,8 @@ use toml::Table;
 pub struct Config {
     pub repo_owner: String,
     pub repo_name: String,
+    pub repo_owner_detached: String,
+    pub repo_name_detached: String,
     pub poll_interval: Duration,
     pub signer_name: String,
     pub gpg_key_id: String,
@@ -19,6 +21,8 @@ impl Default for Config {
         Self {
             repo_owner: "bitcoin".to_string(),
             repo_name: "bitcoin".to_string(),
+            repo_owner_detached: "bitcoin-core".to_string(),
+            repo_name_detached: "bitcoin-detached-sigs".to_string(),
             poll_interval: Duration::from_secs(60),
             signer_name: String::new(),
             gpg_key_id: String::new(),
@@ -38,6 +42,8 @@ impl Config {
         Ok(Self {
             repo_owner: "bitcoin".to_string(),
             repo_name: "bitcoin".to_string(),
+            repo_owner_detached: "bitcoin-core".to_string(),
+            repo_name_detached: "bitcoin-detached-sigs".to_string(),
             poll_interval: Duration::from_secs(60),
             signer_name: parsed_config["SIGNER_NAME"]
                 .as_str()
