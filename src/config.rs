@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use dirs::config_dir;
+use dirs::{config_dir, state_dir};
 use std::{path::PathBuf, time::Duration};
 use toml::Table;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct Config {
     pub repo_owner: String,
     pub repo_name: String,
@@ -14,10 +14,17 @@ pub struct Config {
     pub gpg_key_id: String,
     pub guix_sigs_fork_url: String,
     pub multi_package: bool,
+    pub guix_build_dir: PathBuf,
+    pub guix_sigs_dir: PathBuf,
+    pub bitcoin_detached_sigs_dir: PathBuf,
+    pub macos_sdks_dir: PathBuf,
+    pub bitcoin_dir: PathBuf,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let state = state_dir().unwrap_or_else(|| PathBuf::from("."));
+        let guix_build_dir = state.join("guix-builds");
         Self {
             repo_owner: "bitcoin".to_string(),
             repo_name: "bitcoin".to_string(),
@@ -28,9 +35,15 @@ impl Default for Config {
             gpg_key_id: String::new(),
             guix_sigs_fork_url: String::new(),
             multi_package: false,
+            guix_build_dir: guix_build_dir.clone(),
+            guix_sigs_dir: guix_build_dir.join("guix.sigs"),
+            bitcoin_detached_sigs_dir: guix_build_dir.join("bitcoin-detached-sigs"),
+            macos_sdks_dir: guix_build_dir.join("macos-sdks"),
+            bitcoin_dir: guix_build_dir.join("bitcoin"),
         }
     }
 }
+
 impl Config {
     pub fn load() -> Result<Self> {
         let config_path = get_config_file("config.toml");
@@ -39,26 +52,31 @@ impl Config {
         let parsed_config: Table =
             toml::from_str(&config_str).context("Failed to parse config file")?;
 
-        Ok(Self {
-            repo_owner: "bitcoin".to_string(),
-            repo_name: "bitcoin".to_string(),
-            repo_owner_detached: "bitcoin-core".to_string(),
-            repo_name_detached: "bitcoin-detached-sigs".to_string(),
-            poll_interval: Duration::from_secs(60),
-            signer_name: parsed_config["SIGNER_NAME"]
+        let mut config = Config {
+            signer_name: parsed_config["signer_name"]
                 .as_str()
-                .context("SIGNER_NAME not found in config")?
+                .context("signer_name not found in config")?
                 .to_string(),
-            gpg_key_id: parsed_config["GPG_KEY_ID"]
+            gpg_key_id: parsed_config["gpg_key_id"]
                 .as_str()
-                .context("GPG_KEY_ID not found in config")?
+                .context("gpg_key_id not found in config")?
                 .to_string(),
-            guix_sigs_fork_url: parsed_config["GUIX_SIGS_FORK"]
+            guix_sigs_fork_url: parsed_config["guix_sigs_fork_url"]
                 .as_str()
-                .context("GUIX_SIGS_FORK not found in config")?
+                .context("guix_sigs_fork_url not found in config")?
                 .to_string(),
-            multi_package: false,
-        })
+            ..Default::default()
+        };
+
+        if let Some(guix_build_dir) = parsed_config.get("guix_build_dir") {
+            config.guix_build_dir = PathBuf::from(guix_build_dir.as_str().unwrap());
+            config.guix_sigs_dir = config.guix_build_dir.join("guix.sigs");
+            config.bitcoin_detached_sigs_dir = config.guix_build_dir.join("bitcoin-detached-sigs");
+            config.macos_sdks_dir = config.guix_build_dir.join("macos-sdks");
+            config.bitcoin_dir = config.guix_build_dir.join("bitcoin");
+        }
+
+        Ok(config)
     }
 }
 

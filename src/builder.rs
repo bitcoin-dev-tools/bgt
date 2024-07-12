@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use dirs::state_dir;
 use flate2::read::GzDecoder;
 use log::warn;
 use log::{debug, info};
@@ -30,11 +29,6 @@ pub struct Builder {
     config: Config,
     version: String,
     action: BuildAction,
-    guix_build_dir: PathBuf,
-    guix_sigs_dir: PathBuf,
-    bitcoin_detached_sigs_dir: PathBuf,
-    macos_sdks_dir: PathBuf,
-    bitcoin_dir: PathBuf,
 }
 
 impl fmt::Display for Builder {
@@ -44,8 +38,8 @@ impl fmt::Display for Builder {
         writeln!(f, "  gpg_key_id: {}", self.config.gpg_key_id)?;
         writeln!(f, "  version: {}", self.version)?;
         writeln!(f, "  action: {:?}", self.action)?;
-        writeln!(f, "  guix_build_dir: {:?}", self.guix_build_dir)?;
-        writeln!(f, "  guix_sigs_dir: {:?}", self.guix_sigs_dir)?;
+        writeln!(f, "  guix_build_dir: {:?}", self.config.guix_build_dir)?;
+        writeln!(f, "  guix_sigs_dir: {:?}", self.config.guix_sigs_dir)?;
         writeln!(
             f,
             "  guix_sigs_fork_url: {:?}",
@@ -54,68 +48,63 @@ impl fmt::Display for Builder {
         writeln!(
             f,
             "  bitcoin_detached_sigs_dir: {:?}",
-            self.bitcoin_detached_sigs_dir
+            self.config.bitcoin_detached_sigs_dir
         )?;
-        writeln!(f, "  macos_sdks_dir: {:?}", self.macos_sdks_dir)?;
-        writeln!(f, "  bitcoin_dir: {:?}", self.bitcoin_dir)?;
+        writeln!(f, "  macos_sdks_dir: {:?}", self.config.macos_sdks_dir)?;
+        writeln!(f, "  bitcoin_dir: {:?}", self.config.bitcoin_dir)?;
         writeln!(f, "}}")
     }
 }
 
 impl Builder {
     pub fn new(version: String, action: BuildAction, config: Config) -> Result<Self> {
-        let state = state_dir().context("Failed to get a state dir")?;
-        let guix_build_dir = PathBuf::from(&state).join("guix-builds");
-        let bitcoin_dir = guix_build_dir.join("bitcoin");
-        let guix_sigs_dir = guix_build_dir.join("guix.sigs");
-        let bitcoin_detached_sigs_dir = guix_build_dir.join("bitcoin-detached-sigs");
-        let macos_sdks_dir = guix_build_dir.join("macos-sdks");
-
         Ok(Self {
             config,
             version,
             action,
-            guix_build_dir,
-            guix_sigs_dir,
-            bitcoin_detached_sigs_dir,
-            macos_sdks_dir,
-            bitcoin_dir,
         })
     }
 
     pub async fn init(&self) -> Result<()> {
         // Create guix_build_dir if it doesn't exist
-        if !self.guix_build_dir.exists() {
-            info!("Creating guix_build_dir: {:?}", self.guix_build_dir);
-            fs::create_dir_all(&self.guix_build_dir).context("Failed to create guix_build_dir")?;
+        if !self.config.guix_build_dir.exists() {
+            info!("Creating guix_build_dir: {:?}", self.config.guix_build_dir);
+            fs::create_dir_all(&self.config.guix_build_dir)
+                .context("Failed to create guix_build_dir")?;
         }
 
         // Clone bitcoin/bitcoin if it doesn't exist
-        if !self.bitcoin_dir.exists() {
+        if !self.config.bitcoin_dir.exists() {
             info!("Cloning bitcoin repository");
             self.run_command(
-                &self.guix_build_dir,
+                &self.config.guix_build_dir,
                 "git",
                 &[
                     "clone",
                     "--depth",
                     "1",
                     "https://github.com/bitcoin/bitcoin",
-                    self.bitcoin_dir.file_name().unwrap().to_str().unwrap(),
+                    self.config
+                        .bitcoin_dir
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
                 ],
             )?;
         }
 
         // Clone bitcoin-detached-sigs if it doesn't exist
-        if !self.bitcoin_detached_sigs_dir.exists() {
+        if !self.config.bitcoin_detached_sigs_dir.exists() {
             info!("Cloning bitcoin-detached-sigs repository");
             self.run_command(
-                &self.guix_build_dir,
+                &self.config.guix_build_dir,
                 "git",
                 &[
                     "clone",
                     "https://github.com/bitcoin-core/bitcoin-detached-sigs",
-                    self.bitcoin_detached_sigs_dir
+                    self.config
+                        .bitcoin_detached_sigs_dir
                         .file_name()
                         .unwrap()
                         .to_str()
@@ -125,29 +114,35 @@ impl Builder {
         }
 
         // Create macos_sdks_dir if it doesn't exist
-        if !self.macos_sdks_dir.exists() {
-            info!("Creating macos_sdks_dir: {:?}", self.macos_sdks_dir);
-            fs::create_dir_all(&self.macos_sdks_dir).context("Failed to create macos_sdks_dir")?;
+        if !self.config.macos_sdks_dir.exists() {
+            info!("Creating macos_sdks_dir: {:?}", self.config.macos_sdks_dir);
+            fs::create_dir_all(&self.config.macos_sdks_dir)
+                .context("Failed to create macos_sdks_dir")?;
         }
 
         // Clone guix.sigs if it doesn't exist
-        if !self.guix_sigs_dir.exists() {
+        if !self.config.guix_sigs_dir.exists() {
             info!("Cloning guix.sigs repository");
             self.run_command(
-                &self.guix_build_dir,
+                &self.config.guix_build_dir,
                 "git",
                 &[
                     "clone",
                     "--origin",
                     "upstream",
                     "https://github.com/bitcoin-core/guix.sigs.git",
-                    self.guix_sigs_dir.file_name().unwrap().to_str().unwrap(),
+                    self.config
+                        .guix_sigs_dir
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
                 ],
             )?;
 
             // Set the origin remote
             self.run_command(
-                &self.guix_sigs_dir,
+                &self.config.guix_sigs_dir,
                 "git",
                 &["remote", "add", "origin", &self.config.guix_sigs_fork_url],
             )?;
@@ -177,7 +172,7 @@ impl Builder {
 
         let sdk_name = xor_decrypt(sdk_name_encrypted);
         debug!("Using sdk name: {:?}", sdk_name);
-        let sdk_path = self.macos_sdks_dir.join(&sdk_name);
+        let sdk_path = self.config.macos_sdks_dir.join(&sdk_name);
         debug!("Using sdk path: {:?}", sdk_path);
 
         if !sdk_path.exists() {
@@ -195,7 +190,10 @@ impl Builder {
         let base_url = xor_decrypt(base_url_encrypted);
 
         let url = format!("{}{}.tar.gz", base_url, sdk_name);
-        let tar_gz_path = self.macos_sdks_dir.join(format!("{}.tar.gz", sdk_name));
+        let tar_gz_path = self
+            .config
+            .macos_sdks_dir
+            .join(format!("{}.tar.gz", sdk_name));
         debug!("Using tar.gz path: {:?}", tar_gz_path);
 
         info!("Downloading SDK {}", sdk_name);
@@ -212,7 +210,7 @@ impl Builder {
         let tar_gz = std::fs::File::open(&tar_gz_path)?;
         let tar = GzDecoder::new(tar_gz);
         let mut archive = Archive::new(tar);
-        archive.unpack(&self.macos_sdks_dir)?;
+        archive.unpack(&self.config.macos_sdks_dir)?;
 
         // Remove the tar.gz file
         tokio::fs::remove_file(&tar_gz_path).await?;
@@ -222,16 +220,20 @@ impl Builder {
     }
 
     pub async fn run(&self) -> Result<()> {
-        self.refresh_repos()?;
-        self.checkout_bitcoin()?;
         match self.action {
             BuildAction::Setup => {}
             BuildAction::Build => {
+                self.refresh_repos()?;
+                self.checkout_bitcoin()?;
                 self.check_sdk().await?;
                 self.guix_build()?;
             }
-            BuildAction::NonCodeSigned => self.guix_attest("non-codesigned")?,
+            BuildAction::NonCodeSigned => {
+                self.checkout_bitcoin()?;
+                self.guix_attest("non-codesigned")?
+            }
             BuildAction::CodeSigned => {
+                self.checkout_bitcoin()?;
                 self.guix_codesign()?;
                 self.guix_attest("codesigned")?;
             }
@@ -246,7 +248,7 @@ impl Builder {
         // Fetch the tag
         let mut command = Command::new("git");
         command
-            .current_dir(&self.bitcoin_dir)
+            .current_dir(&self.config.bitcoin_dir)
             .args([
                 "fetch",
                 "origin",
@@ -262,7 +264,7 @@ impl Builder {
         // Checkout the version
         let mut command = Command::new("git");
         command
-            .current_dir(&self.bitcoin_dir)
+            .current_dir(&self.config.bitcoin_dir)
             .args(["checkout", &self.version])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -274,22 +276,22 @@ impl Builder {
     fn refresh_repos(&self) -> Result<()> {
         info!("Refreshing guix.sigs and bitcoin-detached-sigs repos");
         self.run_command(
-            &self.guix_build_dir.join("guix.sigs"),
+            &self.config.guix_build_dir.join("guix.sigs"),
             "git",
             &["checkout", "main"],
         )?;
         self.run_command(
-            &self.guix_build_dir.join("guix.sigs"),
+            &self.config.guix_build_dir.join("guix.sigs"),
             "git",
             &["pull", "upstream", "main"],
         )?;
         self.run_command(
-            &self.guix_build_dir.join("bitcoin-detached-sigs"),
+            &self.config.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
             &["checkout", "master"],
         )?;
         self.run_command(
-            &self.guix_build_dir.join("bitcoin-detached-sigs"),
+            &self.config.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
             &["pull", "origin", "master"],
         )?;
@@ -298,15 +300,18 @@ impl Builder {
 
     fn guix_build(&self) -> Result<()> {
         info!("Starting build process");
-        let mut command = Command::new(self.bitcoin_dir.join("contrib/guix/guix-build"));
+        let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-build"));
         command
-            .current_dir(&self.bitcoin_dir)
+            .current_dir(&self.config.bitcoin_dir)
             .env(
                 "SOURCES_PATH",
-                self.guix_build_dir.join("depends-sources-cache"),
+                self.config.guix_build_dir.join("depends-sources-cache"),
             )
-            .env("BASE_CACHE", self.guix_build_dir.join("depends-base-cache"))
-            .env("SDK_PATH", self.guix_build_dir.join("macos-sdks"))
+            .env(
+                "BASE_CACHE",
+                self.config.guix_build_dir.join("depends-base-cache"),
+            )
+            .env("SDK_PATH", self.config.guix_build_dir.join("macos-sdks"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -322,12 +327,16 @@ impl Builder {
 
     fn guix_attest(&self, a_type: &str) -> Result<()> {
         info!("Attesting {} binaries", a_type);
-        let mut command = Command::new(self.bitcoin_dir.join("contrib/guix/guix-attest"));
+        let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-attest"));
         command
-            .current_dir(&self.bitcoin_dir)
+            .current_dir(&self.config.bitcoin_dir)
             .env(
                 "GUIX_SIGS_REPO",
-                self.guix_build_dir.join("guix.sigs").to_str().unwrap(),
+                self.config
+                    .guix_build_dir
+                    .join("guix.sigs")
+                    .to_str()
+                    .unwrap(),
             )
             // SIGNER=0x96AB007F1A7ED999=dongcarl
             .env(
@@ -348,12 +357,13 @@ impl Builder {
 
     fn guix_codesign(&self) -> Result<()> {
         info!("Codesigning binaries");
-        let mut command = Command::new(self.bitcoin_dir.join("contrib/guix/guix-codesign"));
+        let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-codesign"));
         command
-            .current_dir(&self.bitcoin_dir)
+            .current_dir(&self.config.bitcoin_dir)
             .env(
                 "DETACHED_SIGS_REPO",
-                self.guix_build_dir
+                self.config
+                    .guix_build_dir
                     .join("bitcoin-detached-sigs")
                     .to_str()
                     .unwrap(),
@@ -367,9 +377,9 @@ impl Builder {
 
     fn guix_clean(&self) -> Result<()> {
         info!("Running guix-clean");
-        let mut command = Command::new(self.bitcoin_dir.join("contrib/guix/guix-clean"));
+        let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-clean"));
         command
-            .current_dir(&self.bitcoin_dir)
+            .current_dir(&self.config.bitcoin_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -391,7 +401,7 @@ impl Builder {
         // Create new branch
         let mut command = Command::new("git");
         command
-            .current_dir(&self.guix_build_dir.join("guix.sigs"))
+            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
             .args(["checkout", "-b", &branch_name])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -441,7 +451,7 @@ impl Builder {
 
         let mut command = Command::new("git");
         command
-            .current_dir(&self.guix_build_dir.join("guix.sigs"))
+            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
             .args(&git_add_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -450,7 +460,7 @@ impl Builder {
         // Echo the sigs
         let mut command = Command::new("cat");
         command
-            .current_dir(&self.guix_build_dir.join("guix.sigs"))
+            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
             .args(add_files.iter().map(String::as_str))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -459,7 +469,7 @@ impl Builder {
         // Commit changes
         let mut command = Command::new("git");
         command
-            .current_dir(&self.guix_build_dir.join("guix.sigs"))
+            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
             .args(["commit", "-m", &commit_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -469,7 +479,7 @@ impl Builder {
 To push the changes, run the following commands:
     cd {:?}
     git push origin"#,
-            &self.guix_sigs_dir
+            &self.config.guix_sigs_dir
         );
 
         Ok(())
