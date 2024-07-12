@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use dirs::{config_dir, state_dir};
+use std::fmt;
 use std::{path::PathBuf, time::Duration};
 use toml::Table;
 
@@ -41,6 +42,35 @@ impl Default for Config {
             macos_sdks_dir: guix_build_dir.join("macos-sdks"),
             bitcoin_dir: guix_build_dir.join("bitcoin"),
         }
+    }
+}
+
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "BGT Builder Configuration:")?;
+        writeln!(f, "  Repository Owner: {}", self.repo_owner)?;
+        writeln!(f, "  Repository Name: {}", self.repo_name)?;
+        writeln!(
+            f,
+            "  Detached Repository Owner: {}",
+            self.repo_owner_detached
+        )?;
+        writeln!(f, "  Detached Repository Name: {}", self.repo_name_detached)?;
+        writeln!(f, "  Poll Interval: {:?}", self.poll_interval)?;
+        writeln!(f, "  Signer Name: {}", self.signer_name)?;
+        writeln!(f, "  GPG Key ID: {}", self.gpg_key_id)?;
+        writeln!(f, "  Guix Sigs Fork URL: {}", self.guix_sigs_fork_url)?;
+        writeln!(f, "  Multi-package: {}", self.multi_package)?;
+        writeln!(f, "  Guix Build Directory: {:?}", self.guix_build_dir)?;
+        writeln!(f, "  Guix Sigs Directory: {:?}", self.guix_sigs_dir)?;
+        writeln!(
+            f,
+            "  Bitcoin Detached Sigs Directory: {:?}",
+            self.bitcoin_detached_sigs_dir
+        )?;
+        writeln!(f, "  macOS SDKs Directory: {:?}", self.macos_sdks_dir)?;
+        writeln!(f, "  Bitcoin Directory: {:?}", self.bitcoin_dir)?;
+        Ok(())
     }
 }
 

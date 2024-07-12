@@ -32,7 +32,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run the setup wizard
-    Wizard,
+    Setup,
     /// Build a specific tag
     Build {
         /// The tag to build
@@ -52,6 +52,8 @@ enum Commands {
     Watch,
     /// Clean up guix build directories leaving caches intact
     Clean,
+    /// View the current configuration settings
+    ShowConfig,
 }
 
 #[derive(Subcommand)]
@@ -72,7 +74,7 @@ async fn main() -> Result<()> {
     let mut config = match Config::load() {
         Ok(config) => config,
         Err(e) => {
-            if let Commands::Wizard = cli.command {
+            if let Commands::Setup = cli.command {
                 // If the command is Init, we don't need the config yet
                 Config::default()
             } else {
@@ -86,7 +88,7 @@ async fn main() -> Result<()> {
     }
 
     match &cli.command {
-        Commands::Wizard => {
+        Commands::Setup => {
             init_wizard().await?;
         }
         Commands::Build { tag } => {
@@ -107,6 +109,9 @@ async fn main() -> Result<()> {
         Commands::Clean => {
             let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())?;
             builder.run().await?;
+        }
+        Commands::ShowConfig => {
+            println!("{}", config);
         }
     }
 
