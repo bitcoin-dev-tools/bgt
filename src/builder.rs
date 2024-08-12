@@ -1,18 +1,18 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
-use log::warn;
-use log::{debug, info};
+use log::{debug, info, warn};
+use regex::Regex;
+use std::cmp::Ordering;
 use std::fmt;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tar::Archive;
 
 use crate::config::Config;
+use crate::version::compare_versions;
 use crate::xor::xor_decrypt;
-
-use std::collections::HashMap;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -57,6 +57,9 @@ impl fmt::Display for Builder {
 
 impl Builder {
     pub fn new(version: String, action: BuildAction, config: Config) -> Result<Self> {
+        if compare_versions(version.as_str(), "v21.0") == Ordering::Less {
+            bail!("Can't build versions earlier than v0.21.0");
+        }
         Ok(Self {
             config,
             version,
@@ -171,20 +174,10 @@ impl Builder {
     }
 
     async fn check_sdk(&self) -> Result<()> {
-        let mut sdks = HashMap::new();
-        // xor module contains the equivalent encryption function
-        sdks.insert("v25.2", "26,36,59,38,16,68,93,86,75,64,31,1,0,118,118,114,54,111,16,17,24,22,4,17,70,85,86,25,17,3,31,111,2,0,24,12,72,30,91,82,81,76,58,106,60,39,20,13,9,22,22");
-        sdks.insert("v26.2", "26,36,59,38,16,68,93,86,75,64,31,1,0,118,118,114,54,111,16,17,24,22,4,17,70,85,86,25,17,3,31,111,2,0,24,12,72,30,91,82,81,76,58,106,60,39,20,13,9,22,22");
-        sdks.insert("v27.1", "26,36,59,38,16,68,93,81,75,66,31,1,7,117,112,115,100,38,88,12,20,16,23,19,81,68,87,80,111,20,16,9,88,30,5,16,13,95,94,89,80,87,58,63,121,42,16,8,8,1,23,1");
+        let darwin_mk_path = self.config.bitcoin_dir.join("depends/hosts/darwin.mk");
+        let sdk_version = self.extract_sdk_version(&darwin_mk_path)?;
 
-        let sdk_name_encrypted = sdks.get(&self.version as &str).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unsupported version when matching to sdks: {}",
-                self.version
-            )
-        })?;
-
-        let sdk_name = xor_decrypt(sdk_name_encrypted);
+        let sdk_name = format!("Xcode-{}-extracted-SDK-with-libcxx-headers", sdk_version);
         debug!("Using sdk name: {:?}", sdk_name);
         let sdk_path = self.config.macos_sdks_dir.join(&sdk_name);
         debug!("Using sdk path: {:?}", sdk_path);
@@ -197,6 +190,39 @@ impl Builder {
         }
 
         Ok(())
+    }
+
+    fn extract_sdk_version(&self, darwin_mk_path: &PathBuf) -> Result<String> {
+        let file = File::open(darwin_mk_path)
+            .with_context(|| format!("Failed to open file: {:?}", darwin_mk_path))?;
+        let reader = BufReader::new(file);
+
+        let xcode_version_regex = Regex::new(r"XCODE_VERSION=([\d\.]+)")?;
+        let xcode_build_id_regex = Regex::new(r"XCODE_BUILD_ID=([\w]+)")?;
+
+        let mut xcode_version = String::new();
+        let mut xcode_build_id = String::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if let Some(captures) = xcode_version_regex.captures(&line) {
+                xcode_version = captures[1].to_string();
+            }
+            if let Some(captures) = xcode_build_id_regex.captures(&line) {
+                xcode_build_id = captures[1].to_string();
+            }
+            if !xcode_version.is_empty() && !xcode_build_id.is_empty() {
+                break;
+            }
+        }
+
+        if xcode_version.is_empty() || xcode_build_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to extract Xcode version and build ID from darwin.mk"
+            ));
+        }
+
+        Ok(format!("{}-{}", xcode_version, xcode_build_id))
     }
 
     async fn download_and_extract_sdk(&self, sdk_name: &str) -> Result<()> {
