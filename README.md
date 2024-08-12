@@ -108,7 +108,7 @@ Contributions to bgt-builder are welcome! Please feel free to submit issues and 
 
 ## License
 
-See [license](https://github.com/bitcoin-dev-tools/bgt-builder/LICENSE).
+See [license](https://raw.githubusercontent.com/bitcoin-dev-tools/bgt-builder/master/LICENSE).
 
 ## Plans
 
