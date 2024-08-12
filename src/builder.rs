@@ -152,6 +152,21 @@ impl Builder {
             );
         }
 
+        // Check if the GPG key is available
+        let output = Command::new("gpg")
+            .args(&["--list-keys", &self.config.gpg_key_id])
+            .output()
+            .context("Failed to execute gpg command")?;
+
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "GPG key {} not found",
+                self.config.gpg_key_id
+            ));
+        }
+
+        info!("GPG key {} found", self.config.gpg_key_id);
+
         Ok(())
     }
 

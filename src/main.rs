@@ -7,7 +7,7 @@ mod xor;
 
 use std::collections::HashSet;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use builder::{BuildAction, Builder};
 use clap::{Parser, Subcommand};
 use config::Config;
@@ -73,17 +73,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Try to load the config file
-    let mut config = match Config::load() {
-        Ok(config) => config,
-        Err(e) => {
-            if let Commands::Setup = cli.command {
-                // If the command is Init, we don't need the config yet
-                Config::default()
-            } else {
-                error!("Failed to load config: {}. Please run 'bgt init' to set up your configuration.", e);
-                return Err(anyhow::anyhow!("Config not properly set up"));
-            }
-        }
+    let mut config = match &cli.command {
+        Commands::Setup => Config::default(),
+        _ => read_config().context("Failed to read config")?,
     };
     if cli.multi_package {
         config.multi_package = true;
@@ -92,7 +84,10 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Setup => {
             init_wizard().await?;
+            // Re-read the config here, as we may have updated it
+            config = read_config().context("Failed to read updated config")?;
             initialize_builder(&config).await?;
+            println!("Initialization complete. You can now use bgt builder!");
         }
         Commands::Build { tag } => {
             initialize_builder(&config).await?;
@@ -119,6 +114,16 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn read_config() -> Result<Config> {
+    Config::load().map_err(|e| {
+        error!(
+            "Failed to load config: {}. Please run 'bgt setup' to set up your configuration.",
+            e
+        );
+        anyhow::anyhow!("Config not properly set up")
+    })
 }
 
 async fn run_watcher(

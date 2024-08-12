@@ -63,8 +63,6 @@ pub(crate) async fn init_wizard() -> Result<()> {
     std::fs::write(&config_path, config_str)?;
 
     println!("Configuration saved to: {}", config_path.display());
-    println!("Initialization complete. You can now use bgt builder!");
-
     Ok(())
 }
 
