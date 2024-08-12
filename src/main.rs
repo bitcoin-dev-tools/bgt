@@ -18,6 +18,8 @@ use tokio::signal;
 use tokio::time::sleep;
 use wizard::init_wizard;
 
+// #![deny(unused_crate_dependencies)]
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -90,6 +92,7 @@ async fn main() -> Result<()> {
     match &cli.command {
         Commands::Setup => {
             init_wizard().await?;
+            initialize_builder(&config).await?;
         }
         Commands::Build { tag } => {
             initialize_builder(&config).await?;
@@ -124,11 +127,15 @@ async fn run_watcher(
     seen_tags_sigs: &mut HashSet<String>,
 ) -> Result<()> {
     let mut in_progress: HashSet<String> = HashSet::new();
+    info!(
+        "Polling {}/{} and {}/{} for new tags every {:?}...",
+        config.repo_owner,
+        config.repo_name,
+        config.repo_owner_detached,
+        config.repo_name_detached,
+        config.poll_interval
+    );
     loop {
-        info!(
-            "Polling https://github.com/{}/{} for new tags every {:?}...",
-            config.repo_owner, config.repo_name, config.poll_interval
-        );
         tokio::select! {
             _ = sleep(config.poll_interval) => {
                 match check_for_new_tags(seen_tags_bitcoin, &config.repo_owner, &config.repo_name).await {

@@ -1,21 +1,14 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{debug, info};
-use reqwest::Client;
-use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::config::{get_config_file, Config};
 use crate::version::compare_versions;
-
-#[derive(Deserialize)]
-struct GitRef {
-    #[serde(rename = "ref")]
-    ref_field: String,
-    // Add other fields if needed
-}
 
 /// Fetches all tags from the GitHub repository and updates the known tags file.
 ///
@@ -54,32 +47,31 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
 
         info!("Fetching all tags from {}/{} repository...", owner, name);
 
-        let client = Client::new();
-        let url = format!(
-            "https://api.github.com/repos/{}/{}/git/refs/tags",
-            owner, name
-        );
+        let output = Command::new("curl")
+            .args([
+                "-H",
+                "User-Agent: BGT-Builder",
+                &format!(
+                    "https://api.github.com/repos/{}/{}/git/refs/tags",
+                    owner, name
+                ),
+            ])
+            .output()
+            .context("Failed to execute curl command")?;
 
-        let tags: Vec<GitRef> = client
-            .get(&url)
-            .header("User-Agent", "BGT-Builder")
-            .send()
-            .await?
-            .json()
-            .await?;
+        let tags: Vec<Value> =
+            serde_json::from_slice(&output.stdout).context("Failed to parse JSON response")?;
 
         let mut new_tags = Vec::new();
-        for git_ref in tags {
-            let tag_name = git_ref
-                .ref_field
-                .trim_start_matches("refs/tags/")
-                .to_string();
-            if tag_name == "noversion" {
-                continue;
-            }
-            if existing_tags.insert(tag_name.clone()) {
-                new_tags.push(tag_name.clone());
-                tag_set.insert(tag_name);
+        for tag in &tags {
+            if let Some(ref_value) = tag.get("ref") {
+                if let Some(ref_str) = ref_value.as_str() {
+                    let tag_name = ref_str.trim_start_matches("refs/tags/").to_string();
+                    if existing_tags.insert(tag_name.clone()) {
+                        new_tags.push(tag_name.clone());
+                        tag_set.insert(tag_name);
+                    }
+                }
             }
         }
 
@@ -141,23 +133,25 @@ pub async fn check_for_new_tags(
     repo_owner: &str,
     repo_name: &str,
 ) -> Result<Vec<String>> {
-    let client = Client::new();
-    let url = format!(
-        "https://api.github.com/repos/{}/{}/git/refs/tags",
-        repo_owner, repo_name
-    );
-    let tags: Vec<GitRef> = client
-        .get(&url)
-        .header("User-Agent", "BGT-Builder")
-        .send()
-        .await?
-        .json()
-        .await?;
+    let output = Command::new("curl")
+        .args([
+            "-H",
+            "User-Agent: BGT-Builder",
+            &format!(
+                "https://api.github.com/repos/{}/{}/git/refs/tags",
+                repo_owner, repo_name
+            ),
+        ])
+        .output()?;
+
+    let tags: Vec<Value> = serde_json::from_slice(&output.stdout)?;
+
     info!("Fetched {} tags", tags.len());
     let mut new_tags = Vec::new();
-    for git_ref in tags {
-        let tag_name = git_ref
-            .ref_field
+    for tag in tags {
+        let tag_name = tag["ref"]
+            .as_str()
+            .unwrap()
             .trim_start_matches("refs/tags/")
             .to_string();
         if !seen_tags.contains(&tag_name) {
@@ -199,7 +193,6 @@ fn write_known_tags(tags: &HashSet<String>, path: &PathBuf) -> Result<()> {
 
     let mut sorted_tags: Vec<_> = tags.iter().collect();
     sorted_tags.sort_by(|a, b| compare_versions(a, b));
-    // TODO: remove the tag called "noversion"
 
     for tag in sorted_tags {
         writeln!(file, "{}", tag)?;

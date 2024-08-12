@@ -8,7 +8,6 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tar::Archive;
-use tokio::io::AsyncWriteExt;
 
 use crate::config::Config;
 use crate::xor::xor_decrypt;
@@ -197,13 +196,13 @@ impl Builder {
         debug!("Using tar.gz path: {:?}", tar_gz_path);
 
         info!("Downloading SDK {}", sdk_name);
-        let response = reqwest::get(&url).await?;
-        let bytes = response.bytes().await?;
+        let status = Command::new("curl")
+            .args(["-L", "-o", tar_gz_path.to_str().unwrap(), &url])
+            .status()?;
 
-        // Write the file
-        let mut file = tokio::fs::File::create(&tar_gz_path).await?;
-        file.write_all(&bytes).await?;
-        file.flush().await?;
+        if !status.success() {
+            return Err(anyhow::anyhow!("Failed to download SDK"));
+        }
 
         // Extract the SDK (this part remains synchronous)
         info!("Extracting SDK");

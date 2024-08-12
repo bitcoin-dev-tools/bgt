@@ -15,7 +15,7 @@ pub(crate) async fn init_wizard() -> Result<()> {
     let default_guix_build_dir = state.join("guix-builds");
 
     let mut config = Config {
-        gpg_key_id: prompt_input("Enter your gpg key fingerprint")?,
+        gpg_key_id: prompt_input("Enter your gpg key id (e.g. 0xA1B2C3D4E5F6G7H8)")?,
         signer_name: prompt_input("Enter your signer name")?,
         guix_sigs_fork_url: prompt_input("Enter the URL of your guix.sigs fork")?,
         guix_build_dir: PathBuf::from(prompt_input(&format!(
