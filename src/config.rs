@@ -111,11 +111,6 @@ impl Config {
     }
 }
 
-/// Returns the path to a configuration file.
-///
-/// # Returns
-///
-/// A PathBuf representing the path to a configuration file.
 pub(crate) fn get_config_file(file: &str) -> PathBuf {
     let mut path = config_dir().unwrap_or_else(|| PathBuf::from("."));
     path.push("bgt");
