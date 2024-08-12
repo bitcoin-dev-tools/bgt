@@ -1,7 +1,15 @@
 [package]
 name = "bgt"
 version = "0.1.0"
+authors = ["Will Clark <will@256k1.dev>"]
 edition = "2021"
+description = "A tool for automated Guix builds of Bitcoin Core"
+readme = "README.md"
+homepage = "https://github.com/bitcoin-dev-tools/bgt-builder"
+repository = "https://github.com/bitcoin-dev-tools/bgt-builder"
+license = "MIT"
+keywords = ["bitcoin", "guix", "builder"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
 
 [dependencies]
 anyhow = "1.0.86"

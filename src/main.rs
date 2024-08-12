@@ -1,3 +1,12 @@
+//! # bgt-builder
+//!
+//! `bgt-builder` is a command-line tool for automated Guix builds of Bitcoin Core.
+//!
+//! This binary provides functionality to build, attest, and codesign Bitcoin Core releases.
+//! It can also watch for new tags and automatically process them.
+//!
+//! For detailed usage instructions, please refer to the README.md file in the repository.
+//!
 mod builder;
 mod config;
 mod fetcher;

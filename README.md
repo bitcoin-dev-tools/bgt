@@ -4,46 +4,105 @@ Bitcoin Guix Tag Builder
 
 ## About
 
-Perform automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/contrib/guix/README.md) of Bitcoin Core when a new tag is detected via polling the GitHub API.
+bgt-builder is a tool to perform automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/contrib/guix/README.md) of Bitcoin Core when a new tag is detected via polling the GitHub API. It can build, attest, and codesign Bitcoin Core releases.
 
-## Run
+## Installation
+
+To install bgt-builder, you need to have Rust and Cargo installed on your system. Then, you can install it from the source:
 
 ```bash
 git clone https://github.com/bitcoin-dev-tools/bgt-builder.git
 cd bgt-builder
-
-# Install tool
 cargo install --path .
-
-# Show commands
-bgt
-
-# Run setup wizard
-bgt run setup
-
-# Build a specific tag
-bgt run build v27.1
-
-# Attest to non-codesigned outputs for a specific tag
-bgt run attest v27.1
-
-# Codesign outputs for a specific tag
-bgt run codesign v27.1
-
-# Run a watcher to auto-build new tags pushed to GH
-# This will also attest, and watch for detached sigs, before codesigning
-# hint: run this process in screen or tmux as it's not daemonised
-bgt run watch
-
-# Clean directories leaving cache intact
-bgt run clean
-
-# View currently configuration values
-bgt run show-config
-
-# Enable debug logging on any command
-RUST_LOG=debug cargo run build v26.2
 ```
+
+## Usage
+
+After installation, you can use the `bgt` command to interact with the tool. Here are the available commands:
+
+### Setup
+
+Run the setup wizard to configure bgt:
+
+```bash
+bgt setup
+```
+
+This will guide you through setting up your GPG key, signer name, and other necessary configurations.
+
+### Build
+
+Build a specific tag of Bitcoin Core:
+
+```bash
+bgt build <tag>
+```
+
+Replace `<tag>` with the specific version tag you want to build, e.g., `v27.1`.
+
+### Attest
+
+Attest to non-codesigned build outputs:
+
+```bash
+bgt attest <tag>
+```
+
+### Codesign
+
+Attach codesignatures to existing non-codesigned outputs and attest:
+
+```bash
+bgt codesign <tag>
+```
+
+### Watch
+
+Run a continuous watcher to monitor for new tags and automatically build them:
+
+```bash
+bgt watch
+```
+
+This command will poll the GitHub API for new tags and automatically build, attest, and codesign new releases.
+
+### Clean
+
+Clean up Guix build directories while leaving caches intact:
+
+```bash
+bgt clean
+```
+
+### Show Config
+
+View the current configuration settings:
+
+```bash
+bgt show-config
+```
+
+## Additional Options
+
+- `--multi-package`: Use `JOBS=1 ADDITIONAL_GUIX_COMMON_FLAGS='--max-jobs=8'` for building. This can be added to any command.
+
+## Logging
+
+bgt uses environment variables for logging configuration. You can set the `RUST_LOG` environment variable to control the log level. For example:
+
+```bash
+RUST_LOG=debug bgt build v27.1
+```
+
+This will run the build command with debug-level logging.
+
+## Contributing
+
+Contributions to bgt-builder are welcome! Please feel free to submit issues and pull requests on our GitHub repository.
+
+## License
+
+See [license](https://github.com/bitcoin-dev-tools/bgt-builder/LICENSE).
 
 ## Plans
 
