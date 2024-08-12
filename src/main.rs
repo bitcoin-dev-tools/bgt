@@ -9,6 +9,7 @@
 //!
 mod builder;
 mod config;
+mod daemon;
 mod fetcher;
 mod version;
 mod wizard;
@@ -21,11 +22,15 @@ use builder::{BuildAction, Builder};
 use clap::{Parser, Subcommand};
 use config::Config;
 use env_logger::Env;
-use fetcher::{check_for_new_tags, fetch_all_tags};
 use log::{debug, error, info, warn};
 use tokio::signal;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::sleep;
-use wizard::init_wizard;
+
+use crate::config::get_config_file;
+use crate::daemon::{start_daemon, stop_daemon};
+use crate::fetcher::{check_for_new_tags, fetch_all_tags};
+use crate::wizard::init_wizard;
 
 // #![deny(unused_crate_dependencies)]
 
@@ -60,7 +65,10 @@ enum Commands {
         tag: String,
     },
     /// Run a continuous watcher to monitor for new tags and automatically build them
-    Watch,
+    Watch {
+        #[command(subcommand)]
+        action: WatchAction,
+    },
     /// Clean up guix build directories leaving caches intact
     Clean,
     /// View the current configuration settings
@@ -73,6 +81,18 @@ enum AttestType {
     Noncodesigned,
     /// Attest with code signing
     Codesigned,
+}
+
+#[derive(Subcommand)]
+enum WatchAction {
+    /// Start the watcher daemon
+    Start {
+        /// Daemonize to background process
+        #[arg(long)]
+        daemon: bool,
+    },
+    /// Stop the watcher daemon
+    Stop,
 }
 
 #[tokio::main]
@@ -96,7 +116,7 @@ async fn main() -> Result<()> {
             // Re-read the config here, as we may have updated it
             config = read_config().context("Failed to read updated config")?;
             initialize_builder(&config).await?;
-            println!("Initialization complete. You can now use bgt builder!");
+            info!("Initialization complete. You can now use bgt builder!");
         }
         Commands::Build { tag } => {
             initialize_builder(&config).await?;
@@ -108,10 +128,29 @@ async fn main() -> Result<()> {
         Commands::Codesign { tag } => {
             codesigned(tag, &config).await;
         }
-        Commands::Watch => {
-            let (mut seen_tags_bitcoin, mut seen_tags_sigs) = fetch_all_tags(&config).await?;
-            initialize_builder(&config).await?;
-            run_watcher(&config, &mut seen_tags_bitcoin, &mut seen_tags_sigs).await?;
+        Commands::Watch { action } => {
+            let pid_file = get_config_file("watch.pid");
+            let log_file = get_config_file("watch.log");
+
+            match action {
+                WatchAction::Start { daemon } => {
+                    if *daemon {
+                        info!("Starting BGT watcher as a daemon...");
+                        info!("View logs at: {}.", log_file.display());
+                        start_daemon(&pid_file, &log_file)?;
+                    } else {
+                        info!("Starting BGT watcher in the foreground...");
+                    }
+                    let (mut seen_tags_bitcoin, mut seen_tags_sigs) =
+                        fetch_all_tags(&config).await?;
+                    initialize_builder(&config).await?;
+                    run_watcher(&config, &mut seen_tags_bitcoin, &mut seen_tags_sigs).await?;
+                }
+                WatchAction::Stop => {
+                    info!("Stopping BGT watcher daemon...");
+                    stop_daemon(&pid_file)?;
+                }
+            }
         }
         Commands::Clean => {
             let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())?;
@@ -149,6 +188,20 @@ async fn run_watcher(
         config.repo_name_detached,
         config.poll_interval
     );
+
+    let (shutdown_sender, mut shutdown_receiver) = tokio::sync::mpsc::channel(1);
+
+    // Spawn a task to handle the SIGTERM signal
+    tokio::spawn(async move {
+        match signal(SignalKind::interrupt()) {
+            Ok(mut sigint) => {
+                sigint.recv().await;
+                info!("Received SIGINT. Initiating graceful shutdown...");
+                shutdown_sender.send(()).await.unwrap();
+            }
+            Err(e) => error!("Failed to create SIGINT handler: {}", e),
+        }
+    });
     loop {
         tokio::select! {
             _ = sleep(config.poll_interval) => {
@@ -199,9 +252,13 @@ async fn run_watcher(
                 info!("Shutting down...");
                 break;
             }
+            _ = shutdown_receiver.recv() => {
+                info!("Received shutdown signal. Cleaning up and shutting down...");
+                break;
+            }
         }
     }
-
+    info!("Watcher stopped.");
     Ok(())
 }
 

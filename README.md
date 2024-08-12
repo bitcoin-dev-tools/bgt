@@ -58,10 +58,16 @@ bgt codesign <tag>
 
 ### Watch
 
-Run a continuous watcher to monitor for new tags and automatically build them:
+Run a continuous watcher to monitor for new tags and automatically build them, optionally as a background daemon:
 
 ```bash
-bgt watch
+bgt watch start <--daemon>
+```
+
+Stop a background watcher daemon
+
+```bash
+bgt watch stop
 ```
 
 This command will poll the GitHub API for new tags and automatically build, attest, and codesign new releases.
