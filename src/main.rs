@@ -17,6 +17,8 @@ mod watcher;
 mod wizard;
 mod xor;
 
+use std::process::Command;
+
 use anyhow::{Context, Result};
 use builder::{BuildAction, Builder};
 use clap::{Parser, Subcommand};
@@ -88,6 +90,9 @@ enum WatchAction {
         /// Daemonize to background process
         #[arg(long)]
         daemon: bool,
+        /// Attempt to automatically attest using gpg
+        #[arg(long)]
+        auto: bool,
     },
     /// Stop the watcher daemon
     Stop,
@@ -131,7 +136,13 @@ async fn main() -> Result<()> {
             let log_file = get_config_file("watch.log");
 
             match action {
-                WatchAction::Start { daemon } => {
+                WatchAction::Start { daemon, auto } => {
+                    if *auto {
+                        info!("Checking for automatic GPG signing capability when using --auto flag...");
+                        check_gpg_signing(&config.gpg_key_id)
+                            .context("Failed to verify GPG signing capability")?;
+                        info!("GPG signing check passed.");
+                    }
                     if *daemon {
                         info!("Starting BGT watcher as a daemon...");
                         info!("View logs at: {}.", log_file.display());
@@ -160,4 +171,28 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn check_gpg_signing(key_id: &str) -> Result<()> {
+    let output = Command::new("gpg")
+        .args([
+            "--batch",
+            "--dry-run",
+            "--local-user",
+            key_id,
+            "--armor",
+            "--sign",
+            "--output",
+            "/dev/null",
+            "/dev/null",
+        ])
+        .output()
+        .context("Failed to execute GPG command")?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("GPG signing check failed: {}", stderr)
+    }
 }
