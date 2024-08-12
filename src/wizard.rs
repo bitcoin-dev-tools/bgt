@@ -14,14 +14,36 @@ pub(crate) async fn init_wizard() -> Result<()> {
     let state = state_dir().unwrap_or_else(|| PathBuf::from("."));
     let default_guix_build_dir = state.join("guix-builds");
 
+    let gpg_key_id =
+        prompt_input_with_validation("Enter your gpg key id (e.g. 0xA1B2C3D4E5F6G7H8)", |input| {
+            if input.starts_with("0x") {
+                Ok(())
+            } else {
+                Err("GPG key id must start with '0x'")
+            }
+        })?;
+
+    let signer_name = prompt_input("Enter your signer name")?;
+
+    let guix_sigs_fork_url =
+        prompt_input_with_validation("Enter the URL of your guix.sigs fork", |input| {
+            if input.starts_with("https://github.com") {
+                Ok(())
+            } else {
+                Err("URL must start with 'https://github.com'")
+            }
+        })?;
+
+    let guix_build_dir = PathBuf::from(prompt_input(&format!(
+        "Enter the path you want to use for the guix_build_dir (press Enter for default of {:?})",
+        default_guix_build_dir
+    ))?);
+
     let mut config = Config {
-        gpg_key_id: prompt_input("Enter your gpg key id (e.g. 0xA1B2C3D4E5F6G7H8)")?,
-        signer_name: prompt_input("Enter your signer name")?,
-        guix_sigs_fork_url: prompt_input("Enter the URL of your guix.sigs fork")?,
-        guix_build_dir: PathBuf::from(prompt_input(&format!(
-            "Enter the path you want to use for the guix_build_dir (press Enter for default of {:?})",
-            default_guix_build_dir
-        ))?),
+        gpg_key_id,
+        signer_name,
+        guix_sigs_fork_url,
+        guix_build_dir,
         ..Default::default()
     };
 
@@ -52,4 +74,19 @@ fn prompt_input(prompt: &str) -> Result<String> {
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     Ok(input.trim().to_string())
+}
+
+fn prompt_input_with_validation<F>(prompt: &str, validator: F) -> Result<String>
+where
+    F: Fn(&str) -> Result<(), &'static str>,
+{
+    loop {
+        let input = prompt_input(prompt)?;
+        match validator(&input) {
+            Ok(()) => return Ok(input),
+            Err(error_message) => {
+                println!("Error: {}. Please try again.", error_message);
+            }
+        }
+    }
 }
