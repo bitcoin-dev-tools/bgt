@@ -45,11 +45,39 @@ pub(crate) async fn init_wizard() -> Result<()> {
         .context("Failed to get guix build directory path")?,
     );
 
+    let auto_open_prs = prompt_input_with_validation(
+        "Would you like to automatically open PRs on GitHub? (yes/no)",
+        |input| {
+            let input = input.to_lowercase();
+            if input == "yes" || input == "no" {
+                Ok(())
+            } else {
+                Err("Please enter 'yes' or 'no'")
+            }
+        },
+    )
+    .context("Failed to get auto-open PRs preference")?
+    .to_lowercase()
+        == "yes";
+
+    let (github_username, gh_token) = if auto_open_prs {
+        let username =
+            prompt_input("Enter your GitHub username").context("Failed to get GitHub username")?;
+        let token =
+            prompt_input("Enter your GitHub token (will be stored in config file unencrypted!)")
+                .context("Failed to get GitHub token")?;
+        (Some(username), Some(token))
+    } else {
+        (None, None)
+    };
+
     let mut config = Config {
         gpg_key_id,
         signer_name,
         guix_sigs_fork_url,
         guix_build_dir,
+        github_username,
+        github_token: gh_token,
         ..Default::default()
     };
 

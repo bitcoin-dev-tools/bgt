@@ -22,15 +22,15 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
     for (repo_type, owner, name, tags_file, tag_set) in [
         (
             "bitcoin",
-            &config.repo_owner,
-            &config.repo_name,
+            &config.source_repo_owner,
+            &config.source_repo_name,
             "known_tags_bitcoin",
             &mut bitcoin_tags,
         ),
         (
             "sigs",
-            &config.repo_owner_detached,
-            &config.repo_name_detached,
+            &config.detached_repo_owner,
+            &config.detached_repo_name,
             "known_tags_sigs",
             &mut sig_tags,
         ),
@@ -111,14 +111,14 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
     info!(
         "Initialized with {} existing tags for {}/{}",
         bitcoin_tags.len(),
-        &config.repo_owner,
-        &config.repo_name
+        &config.source_repo_owner,
+        &config.source_repo_name
     );
     info!(
         "Initialized with {} existing tags for {}/{}",
         sig_tags.len(),
-        &config.repo_owner_detached,
-        &config.repo_name_detached
+        &config.detached_repo_owner,
+        &config.detached_repo_name
     );
 
     Ok((bitcoin_tags, sig_tags))

@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use flate2::read::GzDecoder;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
+use octocrab::Octocrab;
 use regex::Regex;
 use std::cmp::Ordering;
 use std::fmt;
@@ -14,7 +15,11 @@ use crate::config::Config;
 use crate::version::compare_versions;
 use crate::xor::xor_decrypt;
 
-#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub struct BuildArgs {
+    pub auto: bool,
+}
+
 #[derive(Debug)]
 pub enum BuildAction {
     Setup,
@@ -26,8 +31,10 @@ pub enum BuildAction {
 
 pub struct Builder {
     config: Config,
-    version: String,
+    version: Option<String>,
     action: BuildAction,
+    args: BuildArgs,
+    octo: Option<Octocrab>,
 }
 
 impl fmt::Display for Builder {
@@ -35,7 +42,9 @@ impl fmt::Display for Builder {
         writeln!(f, "Builder {{")?;
         writeln!(f, "  signer_name: {}", self.config.signer_name)?;
         writeln!(f, "  gpg_key_id: {}", self.config.gpg_key_id)?;
-        writeln!(f, "  version: {}", self.version)?;
+        if self.version.is_some() {
+            writeln!(f, "  version: {:?}", self.version.clone().unwrap())?;
+        }
         writeln!(f, "  action: {:?}", self.action)?;
         writeln!(f, "  guix_build_dir: {:?}", self.config.guix_build_dir)?;
         writeln!(f, "  guix_sigs_dir: {:?}", self.config.guix_sigs_dir)?;
@@ -56,14 +65,36 @@ impl fmt::Display for Builder {
 }
 
 impl Builder {
-    pub fn new(version: String, action: BuildAction, config: Config) -> Result<Self> {
-        if compare_versions(version.as_str(), "v21.0") == Ordering::Less {
-            bail!("Can't build versions earlier than v0.21.0");
+    pub fn new(
+        version: Option<String>,
+        action: BuildAction,
+        config: Config,
+        args: BuildArgs,
+    ) -> Result<Self> {
+        if let Some(ref v) = version {
+            if compare_versions(v, "v21.0") == Ordering::Less {
+                bail!("Can't build versions earlier than v0.21.0");
+            }
         }
+
+        let octo = config
+            .github_token
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|token| {
+                Octocrab::builder()
+                    .personal_token(token.to_string())
+                    .build()
+                    .context("Couldn't build Octocrab from gh_token")
+            })
+            .transpose()?;
+
         Ok(Self {
             config,
             version,
             action,
+            args,
+            octo,
         })
     }
 
@@ -103,7 +134,12 @@ impl Builder {
                 "git",
                 &[
                     "clone",
-                    "https://github.com/bitcoin-core/bitcoin-detached-sigs",
+                    format!(
+                        "https://github.com/{}/{}.git",
+                        self.config.detached_repo_owner.clone(),
+                        self.config.detached_repo_name.clone()
+                    )
+                    .as_str(),
                     self.config
                         .bitcoin_detached_sigs_dir
                         .file_name()
@@ -132,7 +168,12 @@ impl Builder {
                     "clone",
                     "--origin",
                     "upstream",
-                    "https://github.com/bitcoin-core/guix.sigs.git",
+                    format!(
+                        "https://github.com/{}/{}.git",
+                        self.config.guix_sigs_repo_owner.clone(),
+                        self.config.guix_sigs_repo_name.clone()
+                    )
+                    .as_str(),
                     self.config
                         .guix_sigs_dir
                         .file_name()
@@ -279,16 +320,14 @@ impl Builder {
             BuildAction::NonCodeSigned => {
                 self.checkout_bitcoin()
                     .context("Failed to checkout Bitcoin")?;
-                self.guix_attest("non-codesigned")
-                    .context("Failed to attest non-codesigned binaries")?
+                self.guix_attest("non-codesigned").await?;
             }
             BuildAction::CodeSigned => {
                 self.checkout_bitcoin()
                     .context("Failed to checkout Bitcoin")?;
                 self.guix_codesign()
                     .context("Failed to codesign binaries")?;
-                self.guix_attest("codesigned")
-                    .context("Failed to attest codesigned binaries")?;
+                self.guix_attest("codesigned").await?;
             }
             BuildAction::Clean => self
                 .guix_clean()
@@ -298,20 +337,17 @@ impl Builder {
     }
 
     fn checkout_bitcoin(&self) -> Result<()> {
-        info!("Checking out Bitcoin version {}", self.version);
+        let version = self
+            .version
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Version is not set"))?;
+        info!("Checking out Bitcoin version {}", version);
 
         // Fetch the tag
         let mut command = Command::new("git");
         command
             .current_dir(&self.config.bitcoin_dir)
-            .args([
-                "fetch",
-                "origin",
-                "tag",
-                &self.version,
-                "--no-tags",
-                "--depth=1",
-            ])
+            .args(["fetch", "origin", "tag", version, "--no-tags", "--depth=1"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         self.run_command_with_output(command)?;
@@ -320,12 +356,12 @@ impl Builder {
         let mut command = Command::new("git");
         command
             .current_dir(&self.config.bitcoin_dir)
-            .args(["checkout", &self.version])
+            .args(["checkout", &self.version.clone().unwrap()])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         self.run_command_with_output(command).context(format!(
             "Failed to checkout version {} from bitcoin source",
-            self.version,
+            version,
         ))?;
 
         Ok(())
@@ -388,7 +424,7 @@ impl Builder {
         Ok(())
     }
 
-    fn guix_attest(&self, a_type: &str) -> Result<()> {
+    async fn guix_attest(&self, a_type: &str) -> Result<()> {
         info!("Attesting {} binaries", a_type);
         let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-attest"));
         command
@@ -414,7 +450,8 @@ impl Builder {
 
         self.run_command_with_output(command)
             .context("Failed to execute guix-attest command")?;
-        self.commit_attestations(a_type)
+        self.commit_attestations(a_type, self.octo.as_ref())
+            .await
             .context("Failed to commit attestations")?;
         Ok(())
     }
@@ -453,15 +490,23 @@ impl Builder {
         Ok(())
     }
 
-    fn commit_attestations(&self, attestation_type: &str) -> Result<()> {
+    async fn commit_attestations(
+        &self,
+        attestation_type: &str,
+        build: Option<&Octocrab>,
+    ) -> Result<()> {
         info!("Committing attestations");
+        let version = self
+            .version
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Version is not set"))?;
         let branch_name = format!(
             "{}-{}-{}-attestations",
-            self.config.signer_name, self.version, attestation_type
+            self.config.signer_name, version, attestation_type
         );
         let commit_message = format!(
             "Add {} attestations by {} for {}",
-            attestation_type, self.config.signer_name, self.version
+            attestation_type, self.config.signer_name, version
         );
 
         // Create new branch
@@ -478,22 +523,22 @@ impl Builder {
             vec![
                 format!(
                     "{}/{}/all.SHA256SUMS",
-                    &self.version[1..],
+                    &version[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/all.SHA256SUMS.asc",
-                    &self.version[1..],
+                    &version[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS",
-                    &self.version[1..],
+                    &version[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS.asc",
-                    &self.version[1..],
+                    &version[1..],
                     &self.config.signer_name
                 ),
             ]
@@ -501,12 +546,12 @@ impl Builder {
             vec![
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS",
-                    &self.version[1..],
+                    &version[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS.asc",
-                    &self.version[1..],
+                    &version[1..],
                     &self.config.signer_name
                 ),
             ]
@@ -540,13 +585,55 @@ impl Builder {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         self.run_command_with_output(command)?;
-        warn!(
-            r#"Must manually push to GitHub and open PR.
+        if self.args.auto {
+            if let Some(octocrab) = build {
+                let mut command = Command::new("git");
+                command
+                    .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
+                    .args(["push", "--set-upstream", "origin", branch_name.as_str()])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                self.run_command_with_output(command)?;
+
+                // Get the GitHub username
+                if let Some(github_user) = self
+                    .config
+                    .github_username
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                {
+                    let pull_request = octocrab
+                        .pulls(
+                            self.config.guix_sigs_repo_owner.clone(),
+                            self.config.guix_sigs_repo_name.clone(),
+                        )
+                        .create(
+                            &commit_message,
+                            format!("{}:{}", github_user, branch_name),
+                            "main",
+                        )
+                        .body("Automatically created pull request for new attestations.")
+                        .send()
+                        .await?;
+
+                    info!("Pull request created: {}", pull_request.html_url.unwrap());
+                } else {
+                    info!(
+                    "Changes committed locally. Use --auto to automatically push and create a PR."
+                );
+                }
+            } else {
+                error!("Valid GitHub username not available. Cannot create pull request as no github_username found in config.");
+            }
+        } else {
+            warn!(
+                r#"Changes must be manually pushed to GitHub and a PR opened.
 To push the changes, run the following commands:
     cd {:?}
     git push origin"#,
-            &self.config.guix_sigs_dir
-        );
+                &self.config.guix_sigs_dir
+            );
+        }
 
         Ok(())
     }

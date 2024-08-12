@@ -18,10 +18,10 @@ pub(crate) async fn run_watcher(
     let mut in_progress: HashSet<String> = HashSet::new();
     info!(
         "Polling {}/{} and {}/{} for new tags every {:?}...",
-        config.repo_owner,
-        config.repo_name,
-        config.repo_owner_detached,
-        config.repo_name_detached,
+        config.source_repo_owner,
+        config.source_repo_name,
+        config.detached_repo_owner,
+        config.detached_repo_name,
         config.poll_interval
     );
     let mut sigterm =
@@ -58,34 +58,44 @@ async fn check_and_process_bitcoin_tags(
     seen_tags_bitcoin: &mut HashSet<String>,
     in_progress: &mut HashSet<String>,
 ) -> Result<()> {
-    match check_for_new_tags(seen_tags_bitcoin, &config.repo_owner, &config.repo_name).await {
+    match check_for_new_tags(
+        seen_tags_bitcoin,
+        &config.source_repo_owner,
+        &config.source_repo_name,
+    )
+    .await
+    {
         Ok(new_tags) => {
             if !new_tags.is_empty() {
                 info!(
                     "Detected {} new tags for {}/{}",
                     new_tags.len(),
-                    &config.repo_owner,
-                    &config.repo_name
+                    &config.source_repo_owner,
+                    &config.source_repo_name
                 );
                 for tag in new_tags {
                     in_progress.insert(tag.clone());
                     build_tag(&tag, config)
                         .await
                         .with_context(|| format!("Failed to build tag {}", tag))?;
-                    non_codesigned(&tag, config)
+                    non_codesigned(&tag, config, false)
                         .await
                         .with_context(|| format!("Failed to attest non-codesigned tag {}", tag))?;
                 }
             } else {
                 debug!(
                     "No new tags for {}/{} found",
-                    &config.repo_owner, &config.repo_name
+                    &config.source_repo_owner, &config.source_repo_name
                 );
             }
         }
         Err(e) => {
-            return Err(e)
-                .with_context(|| format!("Error checking for new tags in {}", &config.repo_name));
+            return Err(e).with_context(|| {
+                format!(
+                    "Error checking for new tags in {}",
+                    &config.source_repo_name
+                )
+            });
         }
     }
     Ok(())
@@ -98,8 +108,8 @@ async fn check_and_process_sigs_tags(
 ) -> Result<()> {
     match check_for_new_tags(
         seen_tags_sigs,
-        &config.repo_owner_detached,
-        &config.repo_name_detached,
+        &config.detached_repo_owner,
+        &config.detached_repo_name,
     )
     .await
     {
@@ -108,24 +118,24 @@ async fn check_and_process_sigs_tags(
                 info!(
                     "Detected {} new tags for {}/{}",
                     new_tags.len(),
-                    &config.repo_owner_detached,
-                    &config.repo_name_detached
+                    &config.detached_repo_owner,
+                    &config.detached_repo_name
                 );
                 for tag in new_tags {
                     if in_progress.contains(&tag) {
-                        codesigned(&tag, config)
+                        codesigned(&tag, config, false)
                             .await
                             .with_context(|| format!("Failed to codesign tag {}", tag))?;
                         in_progress.remove(&tag);
                     } else {
                         // TODO: Consider implementing the codesigning attempt here
-                        warn!("New tag detected in {}/{} was not in-progress (already built and non-codesigned) and so cannot be automatically codesigned", &config.repo_owner_detached, &config.repo_name_detached);
+                        warn!("New tag detected in {}/{} was not in-progress (already built and non-codesigned) and so cannot be automatically codesigned", &config.detached_repo_owner, &config.detached_repo_name);
                     }
                 }
             } else {
                 debug!(
                     "No new tags for {}/{} found",
-                    &config.repo_owner_detached, &config.repo_name_detached
+                    &config.detached_repo_owner, &config.detached_repo_name
                 );
             }
         }
@@ -133,7 +143,7 @@ async fn check_and_process_sigs_tags(
             return Err(e).with_context(|| {
                 format!(
                     "Error checking for new tags in {}",
-                    &config.repo_name_detached
+                    &config.detached_repo_name
                 )
             });
         }

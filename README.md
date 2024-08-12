@@ -4,11 +4,15 @@ Bitcoin Guix Tag Builder
 
 ## About
 
-bgt is a tool to perform automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/contrib/guix/README.md) of Bitcoin Core when a new tag is detected via polling the GitHub API. It can build, attest, and codesign tagged Bitcoin Core releases.
+bgt is a tool to perform automated or semi-automated [Guix builds](https://github.com/bitcoin/bitcoin/blob/master/contrib/guix/README.md) of Bitcoin Core.
+
+These can be manually initiated, or trigger when a new tag is detected via polling the GitHub API.
+
+It can build, attest, and codesign tagged Bitcoin Core releases.
 
 ## Installation
 
-To install bgt-builder, you need to have Rust and Cargo installed on your system. Then, you can install it using Cargo:
+To install bgt-builder, you need to have Rust and Cargo installed on your system. Then, you can install it either using Cargo:
 
 ```bash
 cargo install bgt
@@ -17,14 +21,20 @@ cargo install bgt
 Or from source:
 
 ```bash
-git clone https://github.com/bitcoin-dev-tools/bgt-builder.git
-cd bgt-builder
+git clone https://github.com/bitcoin-dev-tools/bgt-builder.git bgt
+cd bgt
 cargo install --path .
 ```
 
 ## Usage
 
-After installation, you can use the `bgt` command to interact with the tool. Here are the available commands:
+After installation, you can use the `bgt` command to interact with the tool.
+
+To see the available commands run:
+
+```bash
+bgt
+```
 
 ### Setup
 
@@ -34,7 +44,7 @@ Run the setup wizard to configure bgt:
 bgt setup
 ```
 
-This will guide you through setting up your GPG key, signer name, and other necessary configurations.
+This will guide you through setting up your GPG key ID, signer name, and other necessary configurations.
 
 ### Build
 

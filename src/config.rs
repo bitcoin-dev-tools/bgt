@@ -2,14 +2,15 @@ use anyhow::{Context, Result};
 use dirs::{config_dir, state_dir};
 use std::fmt;
 use std::{path::PathBuf, time::Duration};
-use toml::Table;
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
-    pub repo_owner: String,
-    pub repo_name: String,
-    pub repo_owner_detached: String,
-    pub repo_name_detached: String,
+    pub source_repo_owner: String,
+    pub source_repo_name: String,
+    pub guix_sigs_repo_owner: String,
+    pub guix_sigs_repo_name: String,
+    pub detached_repo_owner: String,
+    pub detached_repo_name: String,
     pub poll_interval: Duration,
     pub signer_name: String,
     pub gpg_key_id: String,
@@ -20,6 +21,8 @@ pub struct Config {
     pub bitcoin_detached_sigs_dir: PathBuf,
     pub macos_sdks_dir: PathBuf,
     pub bitcoin_dir: PathBuf,
+    pub github_token: Option<String>,
+    pub github_username: Option<String>,
 }
 
 impl Default for Config {
@@ -27,10 +30,12 @@ impl Default for Config {
         let state = state_dir().unwrap_or_else(|| PathBuf::from("."));
         let guix_build_dir = state.join("guix-builds");
         Self {
-            repo_owner: "bitcoin".to_string(),
-            repo_name: "bitcoin".to_string(),
-            repo_owner_detached: "bitcoin-core".to_string(),
-            repo_name_detached: "bitcoin-detached-sigs".to_string(),
+            source_repo_owner: "bitcoin".to_string(),
+            source_repo_name: "bitcoin".to_string(),
+            guix_sigs_repo_owner: "bitcoin-core".to_string(),
+            guix_sigs_repo_name: "guix.sigs".to_string(),
+            detached_repo_owner: "bitcoin-core".to_string(),
+            detached_repo_name: "bitcoin-detached-sigs".to_string(),
             poll_interval: Duration::from_secs(300),
             signer_name: String::new(),
             gpg_key_id: String::new(),
@@ -41,35 +46,31 @@ impl Default for Config {
             bitcoin_detached_sigs_dir: guix_build_dir.join("bitcoin-detached-sigs"),
             macos_sdks_dir: guix_build_dir.join("macos-sdks"),
             bitcoin_dir: guix_build_dir.join("bitcoin"),
+            github_token: None,
+            github_username: None,
         }
     }
 }
 
+#[rustfmt::skip]
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "BGT Builder Configuration:")?;
-        writeln!(f, "  Repository Owner: {}", self.repo_owner)?;
-        writeln!(f, "  Repository Name: {}", self.repo_name)?;
-        writeln!(
-            f,
-            "  Detached Repository Owner: {}",
-            self.repo_owner_detached
-        )?;
-        writeln!(f, "  Detached Repository Name: {}", self.repo_name_detached)?;
-        writeln!(f, "  Poll Interval: {:?}", self.poll_interval)?;
-        writeln!(f, "  Signer Name: {}", self.signer_name)?;
-        writeln!(f, "  GPG Key ID: {}", self.gpg_key_id)?;
-        writeln!(f, "  Guix Sigs Fork URL: {}", self.guix_sigs_fork_url)?;
-        writeln!(f, "  Multi-package: {}", self.multi_package)?;
-        writeln!(f, "  Guix Build Directory: {:?}", self.guix_build_dir)?;
-        writeln!(f, "  Guix Sigs Directory: {:?}", self.guix_sigs_dir)?;
-        writeln!(
-            f,
-            "  Bitcoin Detached Sigs Directory: {:?}",
-            self.bitcoin_detached_sigs_dir
-        )?;
-        writeln!(f, "  macOS SDKs Directory: {:?}", self.macos_sdks_dir)?;
-        writeln!(f, "  Bitcoin Directory: {:?}", self.bitcoin_dir)?;
+        writeln!(f, "{:<32} {}/{}", "Source Repo:", self.source_repo_owner, self.source_repo_name)?;
+        writeln!(f, "{:<32} {}/{}", "Guix sigs repo:", self.guix_sigs_repo_owner, self.guix_sigs_repo_name)?;
+        writeln!(f, "{:<32} {}/{}", "Detached sigs repo:", self.detached_repo_owner, self.detached_repo_name)?;
+        writeln!(f, "{:<32} {:?}",  "Poll Interval:", self.poll_interval)?;
+        writeln!(f, "{:<32} {}",    "Signer Name:", self.signer_name)?;
+        writeln!(f, "{:<32} {}",    "GPG Key ID:", self.gpg_key_id)?;
+        writeln!(f, "{:<32} {}",    "Guix Sigs Fork URL:", self.guix_sigs_fork_url)?;
+        writeln!(f, "{:<32} {}",    "Multi-package:", self.multi_package)?;
+        writeln!(f, "{:<32} {:?}",  "Guix Build Directory:", self.guix_build_dir)?;
+        writeln!(f, "{:<32} {:?}",  "Guix Sigs Directory:", self.guix_sigs_dir)?;
+        writeln!(f, "{:<32} {:?}",  "Bitcoin Detached Sigs Directory:", self.bitcoin_detached_sigs_dir)?;
+        writeln!(f, "{:<32} {:?}",  "macOS SDKs Directory:", self.macos_sdks_dir)?;
+        writeln!(f, "{:<32} {:?}",  "Bitcoin Directory:", self.bitcoin_dir)?;
+        writeln!(f, "{:<32} {}",    "GitHub Username:", self.github_username.as_deref().unwrap_or("None"))?;
+        writeln!(f, "{:<32} {}",    "GitHub Token:", if self.github_token.is_some() { "[redacted]" } else { "Not set" })?;
         Ok(())
     }
 }
@@ -79,36 +80,8 @@ impl Config {
         let config_path = get_config_file("config.toml");
         let config_str = std::fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
-        let parsed_config: Table =
-            toml::from_str(&config_str).context("Failed to parse config file")?;
 
-        let mut config = Config {
-            signer_name: parsed_config["signer_name"]
-                .as_str()
-                .context("signer_name not found in config")?
-                .to_string(),
-            gpg_key_id: parsed_config["gpg_key_id"]
-                .as_str()
-                .context("gpg_key_id not found in config")?
-                .to_string(),
-            guix_sigs_fork_url: parsed_config["guix_sigs_fork_url"]
-                .as_str()
-                .context("guix_sigs_fork_url not found in config")?
-                .to_string(),
-            ..Default::default()
-        };
-
-        if let Some(guix_build_dir) = parsed_config.get("guix_build_dir") {
-            config.guix_build_dir = PathBuf::from(
-                guix_build_dir
-                    .as_str()
-                    .context("guix_build_dir is not a string")?,
-            );
-            config.guix_sigs_dir = config.guix_build_dir.join("guix.sigs");
-            config.bitcoin_detached_sigs_dir = config.guix_build_dir.join("bitcoin-detached-sigs");
-            config.macos_sdks_dir = config.guix_build_dir.join("macos-sdks");
-            config.bitcoin_dir = config.guix_build_dir.join("bitcoin");
-        }
+        let config: Config = toml::from_str(&config_str).context("Failed to parse config file")?;
 
         Ok(config)
     }

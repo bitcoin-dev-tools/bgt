@@ -26,6 +26,7 @@ use config::Config;
 use env_logger::Env;
 use log::info;
 
+use crate::builder::BuildArgs;
 use crate::commands::{build_tag, codesigned, initialize_builder, non_codesigned, run_watcher};
 use crate::config::{get_config_file, read_config};
 use crate::daemon::{start_daemon, stop_daemon};
@@ -58,11 +59,17 @@ enum Commands {
     Attest {
         /// The tag to attest to
         tag: String,
+        /// Attempt to automatically sign using gpg and automatically open a PR on GitHub
+        #[arg(long)]
+        auto: bool,
     },
     /// Attach codesignatures to existing non-codesigned outputs and attest
     Codesign {
         /// The tag to codesign
         tag: String,
+        /// Attempt to automatically sign using gpg and automatically open a PR on GitHub
+        #[arg(long)]
+        auto: bool,
     },
     /// Run a continuous watcher to monitor for new tags and automatically build them
     Watch {
@@ -92,7 +99,7 @@ enum WatchAction {
         /// Daemonize to background process
         #[arg(long)]
         daemon: bool,
-        /// Attempt to automatically attest using gpg
+        /// Attempt to automatically attest using gpg and automatically open a PR on GitHub
         #[arg(long)]
         auto: bool,
     },
@@ -133,13 +140,13 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to build tag {}", tag))?;
         }
-        Commands::Attest { tag } => {
-            non_codesigned(tag, &config)
+        Commands::Attest { tag, auto } => {
+            non_codesigned(tag, &config, *auto)
                 .await
                 .with_context(|| format!("Failed to attest non-codesigned tag {}", tag))?;
         }
-        Commands::Codesign { tag } => {
-            codesigned(tag, &config)
+        Commands::Codesign { tag, auto } => {
+            codesigned(tag, &config, *auto)
                 .await
                 .with_context(|| format!("Failed to codesign tag {}", tag))?;
         }
@@ -179,7 +186,8 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Clean => {
-            let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())
+            let args = BuildArgs::default();
+            let builder = Builder::new(None, BuildAction::Clean, config.clone(), args)
                 .context("Failed to create builder for clean action")?;
             builder.run().await.context("Failed to run clean action")?;
         }

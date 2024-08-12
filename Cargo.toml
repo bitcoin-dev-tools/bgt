@@ -1,6 +1,6 @@
 [package]
 name = "bgt"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Will Clark <will@256k1.dev>"]
 edition = "2021"
 description = "A tool for automated Guix builds of Bitcoin Core"
@@ -20,12 +20,13 @@ env_logger = "0.11.3"
 flate2 = "1.0.30"
 libc = "0.2.155"
 log = "0.4.22"
+octocrab = "0.39.0"
 regex = "1.10.6"
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
 tar = "0.4.41"
 tokio = { version = "1.38.0", features = ["full"] }
-toml = "0.8.14"
+toml = "0.8.19"
 
 [profile.release]
 opt-level = "z"     # Optimize for size.
