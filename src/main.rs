@@ -13,6 +13,7 @@ mod config;
 mod daemon;
 mod fetcher;
 mod version;
+mod watcher;
 mod wizard;
 mod xor;
 

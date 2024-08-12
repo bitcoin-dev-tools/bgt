@@ -32,7 +32,7 @@ impl Default for Config {
             repo_name: "bitcoin".to_string(),
             repo_owner_detached: "bitcoin-core".to_string(),
             repo_name_detached: "bitcoin-detached-sigs".to_string(),
-            poll_interval: Duration::from_secs(60),
+            poll_interval: Duration::from_secs(300),
             signer_name: String::new(),
             gpg_key_id: String::new(),
             guix_sigs_fork_url: String::new(),
