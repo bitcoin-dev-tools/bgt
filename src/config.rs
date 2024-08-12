@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use dirs::{config_dir, state_dir};
+use log::error;
 use std::fmt;
 use std::{path::PathBuf, time::Duration};
 use toml::Table;
@@ -121,4 +122,14 @@ pub(crate) fn get_config_file(file: &str) -> PathBuf {
     std::fs::create_dir_all(&path).expect("Failed to create config directory");
     path.push(file);
     path
+}
+
+pub(crate) fn read_config() -> Result<Config> {
+    Config::load().map_err(|e| {
+        error!(
+            "Failed to load config: {}. Please run 'bgt setup' to set up your configuration.",
+            e
+        );
+        anyhow::anyhow!("Config not properly set up")
+    })
 }

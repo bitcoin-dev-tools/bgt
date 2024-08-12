@@ -31,7 +31,7 @@ pub fn stop_daemon(pid_file: &PathBuf) -> Result<()> {
     if pid_file.exists() {
         let pid = std::fs::read_to_string(pid_file)?.trim().parse::<i32>()?;
         unsafe {
-            libc::kill(pid, libc::SIGINT);
+            libc::kill(pid, libc::SIGKILL);
         }
         std::fs::remove_file(pid_file)?;
 
