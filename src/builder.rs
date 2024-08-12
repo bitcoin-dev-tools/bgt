@@ -68,14 +68,12 @@ impl Builder {
     }
 
     pub async fn init(&self) -> Result<()> {
-        // Create guix_build_dir if it doesn't exist
         if !self.config.guix_build_dir.exists() {
             info!("Creating guix_build_dir: {:?}", self.config.guix_build_dir);
             fs::create_dir_all(&self.config.guix_build_dir)
                 .context("Failed to create guix_build_dir")?;
         }
 
-        // Clone bitcoin/bitcoin if it doesn't exist
         if !self.config.bitcoin_dir.exists() {
             info!("Cloning bitcoin repository");
             self.run_command(
@@ -93,7 +91,8 @@ impl Builder {
                         .to_str()
                         .unwrap(),
                 ],
-            )?;
+            )
+            .context("Failed to clone bitcoin repository")?;
         }
 
         // Clone bitcoin-detached-sigs if it doesn't exist
@@ -112,7 +111,8 @@ impl Builder {
                         .to_str()
                         .unwrap(),
                 ],
-            )?;
+            )
+            .context("Failed to clone bitcoin-detached-sigs repository")?;
         }
 
         // Create macos_sdks_dir if it doesn't exist
@@ -140,7 +140,8 @@ impl Builder {
                         .to_str()
                         .unwrap(),
                 ],
-            )?;
+            )
+            .context("Failed to clone guix.sigs repository")?;
 
             // Set the origin remote
             self.run_command(
@@ -162,10 +163,7 @@ impl Builder {
             .context("Failed to execute gpg command")?;
 
         if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "GPG key {} not found",
-                self.config.gpg_key_id
-            ));
+            bail!("GPG key {} not found", self.config.gpg_key_id);
         }
 
         info!("GPG key {} found", self.config.gpg_key_id);
@@ -175,7 +173,9 @@ impl Builder {
 
     async fn check_sdk(&self) -> Result<()> {
         let darwin_mk_path = self.config.bitcoin_dir.join("depends/hosts/darwin.mk");
-        let sdk_version = self.extract_sdk_version(&darwin_mk_path)?;
+        let sdk_version = self
+            .extract_sdk_version(&darwin_mk_path)
+            .context("Failed to extract SDK version")?;
 
         let sdk_name = format!("Xcode-{}-extracted-SDK-with-libcxx-headers", sdk_version);
         debug!("Using sdk name: {:?}", sdk_name);
@@ -184,7 +184,9 @@ impl Builder {
 
         if !sdk_path.exists() {
             info!("SDK not found. Downloading and extracting...");
-            self.download_and_extract_sdk(&sdk_name).await?;
+            self.download_and_extract_sdk(&sdk_name)
+                .await
+                .context("Failed to download and extract SDK")?;
         } else {
             info!("SDK found: {:?}", sdk_path);
         }
@@ -197,14 +199,16 @@ impl Builder {
             .with_context(|| format!("Failed to open file: {:?}", darwin_mk_path))?;
         let reader = BufReader::new(file);
 
-        let xcode_version_regex = Regex::new(r"XCODE_VERSION=([\d\.]+)")?;
-        let xcode_build_id_regex = Regex::new(r"XCODE_BUILD_ID=([\w]+)")?;
+        let xcode_version_regex = Regex::new(r"XCODE_VERSION=([\d\.]+)")
+            .context("Failed to create Xcode version regex")?;
+        let xcode_build_id_regex = Regex::new(r"XCODE_BUILD_ID=([\w]+)")
+            .context("Failed to create Xcode build ID regex")?;
 
         let mut xcode_version = String::new();
         let mut xcode_build_id = String::new();
 
         for line in reader.lines() {
-            let line = line?;
+            let line = line.context("Failed to read line from file")?;
             if let Some(captures) = xcode_version_regex.captures(&line) {
                 xcode_version = captures[1].to_string();
             }
@@ -217,9 +221,7 @@ impl Builder {
         }
 
         if xcode_version.is_empty() || xcode_build_id.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Failed to extract Xcode version and build ID from darwin.mk"
-            ));
+            bail!("Failed to extract Xcode version and build ID from darwin.mk");
         }
 
         Ok(format!("{}-{}", xcode_version, xcode_build_id))
@@ -239,21 +241,25 @@ impl Builder {
         info!("Downloading SDK {}", sdk_name);
         let status = Command::new("curl")
             .args(["-L", "-o", tar_gz_path.to_str().unwrap(), &url])
-            .status()?;
+            .status()
+            .context("Failed to execute curl command")?;
 
         if !status.success() {
-            return Err(anyhow::anyhow!("Failed to download SDK"));
+            bail!("Failed to download SDK");
         }
 
-        // Extract the SDK (this part remains synchronous)
         info!("Extracting SDK");
-        let tar_gz = std::fs::File::open(&tar_gz_path)?;
+        let tar_gz =
+            std::fs::File::open(&tar_gz_path).context("Failed to open downloaded SDK archive")?;
         let tar = GzDecoder::new(tar_gz);
         let mut archive = Archive::new(tar);
-        archive.unpack(&self.config.macos_sdks_dir)?;
+        archive
+            .unpack(&self.config.macos_sdks_dir)
+            .context("Failed to extract SDK archive")?;
 
-        // Remove the tar.gz file
-        tokio::fs::remove_file(&tar_gz_path).await?;
+        tokio::fs::remove_file(&tar_gz_path)
+            .await
+            .context("Failed to remove SDK archive")?;
 
         info!("SDK downloaded and extracted successfully");
         Ok(())
@@ -263,21 +269,30 @@ impl Builder {
         match self.action {
             BuildAction::Setup => {}
             BuildAction::Build => {
-                self.refresh_repos()?;
-                self.checkout_bitcoin()?;
-                self.check_sdk().await?;
-                self.guix_build()?;
+                self.refresh_repos()
+                    .context("Failed to refresh repositories")?;
+                self.checkout_bitcoin()
+                    .context("Failed to checkout Bitcoin")?;
+                self.check_sdk().await.context("Failed to check SDK")?;
+                self.guix_build().context("Failed to build with Guix")?;
             }
             BuildAction::NonCodeSigned => {
-                self.checkout_bitcoin()?;
-                self.guix_attest("non-codesigned")?
+                self.checkout_bitcoin()
+                    .context("Failed to checkout Bitcoin")?;
+                self.guix_attest("non-codesigned")
+                    .context("Failed to attest non-codesigned binaries")?
             }
             BuildAction::CodeSigned => {
-                self.checkout_bitcoin()?;
-                self.guix_codesign()?;
-                self.guix_attest("codesigned")?;
+                self.checkout_bitcoin()
+                    .context("Failed to checkout Bitcoin")?;
+                self.guix_codesign()
+                    .context("Failed to codesign binaries")?;
+                self.guix_attest("codesigned")
+                    .context("Failed to attest codesigned binaries")?;
             }
-            BuildAction::Clean => self.guix_clean()?,
+            BuildAction::Clean => self
+                .guix_clean()
+                .context("Failed to clean Guix environment")?,
         }
         Ok(())
     }
@@ -308,7 +323,10 @@ impl Builder {
             .args(["checkout", &self.version])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        self.run_command_with_output(command)?;
+        self.run_command_with_output(command).context(format!(
+            "Failed to checkout version {} from bitcoin source",
+            self.version,
+        ))?;
 
         Ok(())
     }
@@ -319,22 +337,26 @@ impl Builder {
             &self.config.guix_build_dir.join("guix.sigs"),
             "git",
             &["checkout", "main"],
-        )?;
+        )
+        .context("Failed to checkout main branch in guix.sigs")?;
         self.run_command(
             &self.config.guix_build_dir.join("guix.sigs"),
             "git",
             &["pull", "upstream", "main"],
-        )?;
+        )
+        .context("Failed to pull upstream main in guix.sigs")?;
         self.run_command(
             &self.config.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
             &["checkout", "master"],
-        )?;
+        )
+        .context("Failed to checkout master branch in bitcoin-detached-sigs")?;
         self.run_command(
             &self.config.guix_build_dir.join("bitcoin-detached-sigs"),
             "git",
             &["pull", "origin", "master"],
-        )?;
+        )
+        .context("Failed to pull origin master in bitcoin-detached-sigs")?;
         Ok(())
     }
 
@@ -361,7 +383,8 @@ impl Builder {
                 .env("ADDITIONAL_GUIX_COMMON_FLAGS", "--max-jobs=8");
         }
 
-        self.run_command_with_output(command)?;
+        self.run_command_with_output(command)
+            .context("Failed to execute guix-build command")?;
         Ok(())
     }
 
@@ -378,7 +401,6 @@ impl Builder {
                     .to_str()
                     .unwrap(),
             )
-            // SIGNER=0x96AB007F1A7ED999=dongcarl
             .env(
                 "SIGNER",
                 format!(
@@ -390,8 +412,10 @@ impl Builder {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        self.run_command_with_output(command)?;
-        self.commit_attestations(a_type)?;
+        self.run_command_with_output(command)
+            .context("Failed to execute guix-attest command")?;
+        self.commit_attestations(a_type)
+            .context("Failed to commit attestations")?;
         Ok(())
     }
 
@@ -411,7 +435,8 @@ impl Builder {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        self.run_command_with_output(command)?;
+        self.run_command_with_output(command)
+            .context("Failed to execute guix-codesign command")?;
         Ok(())
     }
 
@@ -423,7 +448,8 @@ impl Builder {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        self.run_command_with_output(command)?;
+        self.run_command_with_output(command)
+            .context("Failed to execute guix-clean command")?;
         Ok(())
     }
 
@@ -533,7 +559,7 @@ To push the changes, run the following commands:
             .with_context(|| format!("Failed to execute command: {} {:?}", command, args))?;
 
         if !status.success() {
-            return Err(anyhow::anyhow!("Command failed: {} {:?}", command, args));
+            bail!("Command failed: {} {:?}", command, args);
         }
         Ok(())
     }
@@ -543,13 +569,12 @@ To push the changes, run the following commands:
             .spawn()
             .with_context(|| format!("Failed to execute command: {:?}", command))?;
 
-        let stdout = child.stdout.take().expect("Failed to capture stdout");
-        let stderr = child.stderr.take().expect("Failed to capture stderr");
+        let stdout = child.stdout.take().context("Failed to capture stdout")?;
+        let stderr = child.stderr.take().context("Failed to capture stderr")?;
 
         let stdout_reader = BufReader::new(stdout);
         let stderr_reader = BufReader::new(stderr);
 
-        // Spawn a thread to handle stdout
         let stdout_handle = std::thread::spawn(move || {
             stdout_reader.lines().for_each(|line| {
                 if let Ok(line) = line {
@@ -558,7 +583,6 @@ To push the changes, run the following commands:
             });
         });
 
-        // Spawn a thread to handle stderr
         let stderr_handle = std::thread::spawn(move || {
             stderr_reader.lines().for_each(|line| {
                 if let Ok(line) = line {
@@ -567,15 +591,13 @@ To push the changes, run the following commands:
             });
         });
 
-        // Wait for the command to finish
-        let status = child.wait()?;
+        let status = child.wait().context("Failed to wait for child process")?;
 
-        // Wait for the output threads to finish
         stdout_handle.join().expect("Stdout thread panicked");
         stderr_handle.join().expect("Stderr thread panicked");
 
         if !status.success() {
-            return Err(anyhow::anyhow!("Command failed: {:?}", command));
+            bail!("Command failed: {:?}", command);
         }
 
         Ok(())

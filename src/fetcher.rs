@@ -59,8 +59,8 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
             .output()
             .context("Failed to execute curl command")?;
 
-        let tags: Vec<Value> =
-            serde_json::from_slice(&output.stdout).context("Failed to parse JSON response")?;
+        let tags: Vec<Value> = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse JSON response from GitHub API")?;
 
         let mut new_tags = Vec::new();
         for tag in &tags {
@@ -98,7 +98,8 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
         debug!("All tags for {}: {:?}", repo_type, existing_tags);
 
         info!("Writing updated known tags to file for {}...", repo_type);
-        write_known_tags(&existing_tags, &path)?;
+        write_known_tags(&existing_tags, &path)
+            .context("Failed to write updated known tags to file")?;
 
         tag_set.extend(existing_tags);
     }
@@ -142,16 +143,18 @@ pub async fn check_for_new_tags(
                 repo_owner, repo_name
             ),
         ])
-        .output()?;
+        .output()
+        .context("Failed to execute curl command to fetch tags")?;
 
-    let tags: Vec<Value> = serde_json::from_slice(&output.stdout)?;
+    let tags: Vec<Value> = serde_json::from_slice(&output.stdout)
+        .context("Failed to parse JSON response from GitHub API")?;
 
     info!("Fetched {} tags", tags.len());
     let mut new_tags = Vec::new();
     for tag in tags {
         let tag_name = tag["ref"]
             .as_str()
-            .unwrap()
+            .context("Failed to extract tag name from GitHub API response")?
             .trim_start_matches("refs/tags/")
             .to_string();
         if !seen_tags.contains(&tag_name) {
@@ -169,9 +172,12 @@ pub async fn check_for_new_tags(
 ///
 /// A Result containing a HashSet of known tags, or an error if the file couldn't be read.
 fn read_known_tags(path: &PathBuf) -> Result<HashSet<String>> {
-    let file = File::open(path)?;
+    let file = File::open(path).context("Failed to open known tags file")?;
     let reader = BufReader::new(file);
-    let tags: HashSet<String> = reader.lines().map_while(Result::ok).collect();
+    let tags: HashSet<String> = reader
+        .lines()
+        .map(|line| line.context("Failed to read line from known tags file"))
+        .collect::<Result<_>>()?;
     Ok(tags)
 }
 
@@ -189,13 +195,14 @@ fn write_known_tags(tags: &HashSet<String>, path: &PathBuf) -> Result<()> {
         .write(true)
         .create(true)
         .truncate(true)
-        .open(path)?;
+        .open(path)
+        .context("Failed to open file for writing known tags")?;
 
     let mut sorted_tags: Vec<_> = tags.iter().collect();
     sorted_tags.sort_by(|a, b| compare_versions(a, b));
 
     for tag in sorted_tags {
-        writeln!(file, "{}", tag)?;
+        writeln!(file, "{}", tag).context("Failed to write tag to file")?;
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dirs::state_dir;
 use std::{
     io::{self, Write},
@@ -21,9 +21,11 @@ pub(crate) async fn init_wizard() -> Result<()> {
             } else {
                 Err("GPG key id must start with '0x'")
             }
-        })?;
+        })
+        .context("Failed to get valid GPG key id")?;
 
-    let signer_name = prompt_input("Enter your signer name")?;
+    let signer_name =
+        prompt_input("Enter your signer name").context("Failed to get signer name")?;
 
     let guix_sigs_fork_url =
         prompt_input_with_validation("Enter the URL of your guix.sigs fork", |input| {
@@ -32,12 +34,16 @@ pub(crate) async fn init_wizard() -> Result<()> {
             } else {
                 Err("URL must start with 'https://github.com'")
             }
-        })?;
+        })
+        .context("Failed to get valid guix.sigs fork URL")?;
 
-    let guix_build_dir = PathBuf::from(prompt_input(&format!(
-        "Enter the path you want to use for the guix_build_dir (press Enter for default of {:?})",
-        default_guix_build_dir
-    ))?);
+    let guix_build_dir = PathBuf::from(
+        prompt_input(&format!(
+            "Enter the path you want to use for the guix_build_dir (press Enter for default of {:?})",
+            default_guix_build_dir
+        ))
+        .context("Failed to get guix build directory path")?,
+    );
 
     let mut config = Config {
         gpg_key_id,
@@ -59,8 +65,10 @@ pub(crate) async fn init_wizard() -> Result<()> {
 
     // Write config to file
     let config_path = get_config_file("config.toml");
-    let config_str = toml::to_string_pretty(&config)?;
-    std::fs::write(&config_path, config_str)?;
+    let config_str =
+        toml::to_string_pretty(&config).context("Failed to serialize config to TOML")?;
+    std::fs::write(&config_path, config_str)
+        .with_context(|| format!("Failed to write config to file: {:?}", config_path))?;
 
     println!("Configuration saved to: {}", config_path.display());
     Ok(())
@@ -68,9 +76,11 @@ pub(crate) async fn init_wizard() -> Result<()> {
 
 fn prompt_input(prompt: &str) -> Result<String> {
     print!("{}: ", prompt);
-    io::stdout().flush()?;
+    io::stdout().flush().context("Failed to flush stdout")?;
     let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
+    io::stdin()
+        .read_line(&mut input)
+        .context("Failed to read input")?;
     Ok(input.trim().to_string())
 }
 
@@ -79,7 +89,7 @@ where
     F: Fn(&str) -> Result<(), &'static str>,
 {
     loop {
-        let input = prompt_input(prompt)?;
+        let input = prompt_input(prompt).context("Failed to get user input")?;
         match validator(&input) {
             Ok(()) => return Ok(input),
             Err(error_message) => {

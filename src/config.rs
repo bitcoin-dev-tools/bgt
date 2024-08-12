@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use dirs::{config_dir, state_dir};
-use log::error;
 use std::fmt;
 use std::{path::PathBuf, time::Duration};
 use toml::Table;
@@ -78,8 +77,8 @@ impl fmt::Display for Config {
 impl Config {
     pub fn load() -> Result<Self> {
         let config_path = get_config_file("config.toml");
-        let config_str =
-            std::fs::read_to_string(config_path).context("Failed to read config file")?;
+        let config_str = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
         let parsed_config: Table =
             toml::from_str(&config_str).context("Failed to parse config file")?;
 
@@ -100,7 +99,11 @@ impl Config {
         };
 
         if let Some(guix_build_dir) = parsed_config.get("guix_build_dir") {
-            config.guix_build_dir = PathBuf::from(guix_build_dir.as_str().unwrap());
+            config.guix_build_dir = PathBuf::from(
+                guix_build_dir
+                    .as_str()
+                    .context("guix_build_dir is not a string")?,
+            );
             config.guix_sigs_dir = config.guix_build_dir.join("guix.sigs");
             config.bitcoin_detached_sigs_dir = config.guix_build_dir.join("bitcoin-detached-sigs");
             config.macos_sdks_dir = config.guix_build_dir.join("macos-sdks");
@@ -120,11 +123,6 @@ pub(crate) fn get_config_file(file: &str) -> PathBuf {
 }
 
 pub(crate) fn read_config() -> Result<Config> {
-    Config::load().map_err(|e| {
-        error!(
-            "Failed to load config: {}. Please run 'bgt setup' to set up your configuration.",
-            e
-        );
-        anyhow::anyhow!("Config not properly set up")
-    })
+    Config::load()
+        .context("Failed to load config. Please run 'bgt setup' to set up your configuration.")
 }

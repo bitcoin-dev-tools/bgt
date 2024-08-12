@@ -1,6 +1,6 @@
-//! # bgt-builder
+//! # bgt
 //!
-//! `bgt-builder` is a command-line tool for automated Guix builds of Bitcoin Core.
+//! `bgt` is a command-line tool for automated Guix builds of Bitcoin Core.
 //!
 //! This binary provides functionality to build, attest, and codesign Bitcoin Core releases.
 //! It can also watch for new tags and automatically process them.
@@ -19,7 +19,7 @@ mod xor;
 
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use builder::{BuildAction, Builder};
 use clap::{Parser, Subcommand};
 use config::Config;
@@ -73,6 +73,8 @@ enum Commands {
     Clean,
     /// View the current configuration settings
     ShowConfig,
+    /// Guix build current master to populate Guix caches
+    Warmup,
 }
 
 #[derive(Subcommand)]
@@ -115,21 +117,31 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Setup => {
-            init_wizard().await?;
+            init_wizard().await.context("Failed to run setup wizard")?;
             // Re-read the config here, as we may have updated it
             config = read_config().context("Failed to read updated config")?;
-            initialize_builder(&config).await?;
+            initialize_builder(&config)
+                .await
+                .context("Failed to initialize builder")?;
             info!("Initialization complete. You can now use bgt builder!");
         }
         Commands::Build { tag } => {
-            initialize_builder(&config).await?;
-            build_tag(tag.as_str(), &config).await;
+            initialize_builder(&config)
+                .await
+                .context("Failed to initialize builder")?;
+            build_tag(tag.as_str(), &config)
+                .await
+                .with_context(|| format!("Failed to build tag {}", tag))?;
         }
         Commands::Attest { tag } => {
-            non_codesigned(tag, &config).await;
+            non_codesigned(tag, &config)
+                .await
+                .with_context(|| format!("Failed to attest non-codesigned tag {}", tag))?;
         }
         Commands::Codesign { tag } => {
-            codesigned(tag, &config).await;
+            codesigned(tag, &config)
+                .await
+                .with_context(|| format!("Failed to codesign tag {}", tag))?;
         }
         Commands::Watch { action } => {
             let pid_file = get_config_file("watch.pid");
@@ -146,27 +158,37 @@ async fn main() -> Result<()> {
                     if *daemon {
                         info!("Starting BGT watcher as a daemon...");
                         info!("View logs at: {}.", log_file.display());
-                        start_daemon(&pid_file, &log_file)?;
+                        start_daemon(&pid_file, &log_file).context("Failed to start daemon")?;
                     } else {
                         info!("Starting BGT watcher in the foreground...");
                     }
-                    let (mut seen_tags_bitcoin, mut seen_tags_sigs) =
-                        fetch_all_tags(&config).await?;
-                    initialize_builder(&config).await?;
-                    run_watcher(&config, &mut seen_tags_bitcoin, &mut seen_tags_sigs).await?;
+                    let (mut seen_tags_bitcoin, mut seen_tags_sigs) = fetch_all_tags(&config)
+                        .await
+                        .context("Failed to fetch initial tags")?;
+                    initialize_builder(&config)
+                        .await
+                        .context("Failed to initialize builder")?;
+                    run_watcher(&config, &mut seen_tags_bitcoin, &mut seen_tags_sigs)
+                        .await
+                        .context("Watcher encountered an error")?;
                 }
                 WatchAction::Stop => {
                     info!("Stopping BGT watcher daemon...");
-                    stop_daemon(&pid_file)?;
+                    stop_daemon(&pid_file).context("Failed to stop daemon")?;
                 }
             }
         }
         Commands::Clean => {
-            let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())?;
-            builder.run().await?;
+            let builder = Builder::new(String::new(), BuildAction::Clean, config.clone())
+                .context("Failed to create builder for clean action")?;
+            builder.run().await.context("Failed to run clean action")?;
         }
         Commands::ShowConfig => {
             println!("{}", config);
+        }
+        Commands::Warmup => {
+            // TODO: Implement warmup functionality
+            info!("Warmup functionality not yet implemented");
         }
     }
 
@@ -193,6 +215,6 @@ pub fn check_gpg_signing(key_id: &str) -> Result<()> {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("GPG signing check failed: {}", stderr)
+        bail!("GPG signing check failed: {}", stderr)
     }
 }
