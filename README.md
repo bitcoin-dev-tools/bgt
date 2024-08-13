@@ -10,6 +10,14 @@ These can be manually initiated, or trigger when a new tag is detected via polli
 
 It can build, attest, and codesign tagged Bitcoin Core releases.
 
+## Requirements
+
+- You will need to install and setup Guix for Bitcoin Core by following Bitcoin Core's [INSTALL.md](https://github.com/bitcoin/bitcoin/blob/master/contrib/guix/INSTALL.md).
+- (optional) For attesting (signing) you will need a GPG key configured in your default keyring.
+- You will need a fork of the [bitcoin-core/guix.sigs](https://github.com/bitcoin-core/guix.sigs) repository.
+  - For pull requests to this repository, you will need your GPG key to be in the guix.sigs [builder-keys](https://github.com/bitcoin-core/guix.sigs/tree/main/builder-keys) which can be done via a pull request.
+- (optional) To use `--auto` mode (automatically open pull requests against guix.sigs) you will need a github token with the appropriate permissions (repo).
+
 ## Installation
 
 To install bgt-builder, you need to have Rust and Cargo installed on your system. Then, you can install it either using Cargo:
