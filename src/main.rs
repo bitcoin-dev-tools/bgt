@@ -20,14 +20,14 @@ mod xor;
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
-use builder::{BuildAction, Builder};
+use builder::BuildAction;
 use clap::{Parser, Subcommand};
 use config::Config;
 use env_logger::Env;
 use log::info;
 
 use crate::builder::BuildArgs;
-use crate::commands::{build_tag, codesigned, initialize_builder, non_codesigned, run_watcher};
+use crate::commands::{create_builder, run_watcher};
 use crate::config::{get_config_file, read_config};
 use crate::daemon::{start_daemon, stop_daemon};
 use crate::fetcher::fetch_all_tags;
@@ -122,33 +122,50 @@ async fn main() -> Result<()> {
         config.multi_package = true;
     }
 
+    let mut args = BuildArgs::default();
+
     match &cli.command {
         Commands::Setup => {
             init_wizard().await.context("Failed to run setup wizard")?;
             // Re-read the config here, as we may have updated it
             config = read_config().context("Failed to read updated config")?;
-            initialize_builder(&config)
+            let _ = create_builder(&config, args)
                 .await
                 .context("Failed to initialize builder")?;
-            info!("Initialization complete. You can now use bgt builder!");
+            info!("Builder successfully initialised. bgt ready.");
         }
         Commands::Build { tag } => {
-            initialize_builder(&config)
+            args.action = BuildAction::Build;
+            args.tag = Some(tag.clone());
+            let builder = create_builder(&config, args)
                 .await
                 .context("Failed to initialize builder")?;
-            build_tag(tag.as_str(), &config)
+            builder
+                .run()
                 .await
-                .with_context(|| format!("Failed to build tag {}", tag))?;
+                .with_context(|| format!("Build process for tag {} failed", tag))?;
         }
         Commands::Attest { tag, auto } => {
-            non_codesigned(tag, &config, *auto)
+            args.auto = *auto;
+            args.action = BuildAction::NonCodeSigned;
+            args.tag = Some(tag.clone());
+            let builder = create_builder(&config, args)
                 .await
-                .with_context(|| format!("Failed to attest non-codesigned tag {}", tag))?;
+                .context("Failed to initialize builder")?;
+            builder.run().await.with_context(|| {
+                format!("Noncodesigned attestation process for tag {} failed", tag)
+            })?;
         }
         Commands::Codesign { tag, auto } => {
-            codesigned(tag, &config, *auto)
+            args.auto = *auto;
+            args.action = BuildAction::CodeSigned;
+            args.tag = Some(tag.clone());
+            let builder = create_builder(&config, args)
                 .await
-                .with_context(|| format!("Failed to codesign tag {}", tag))?;
+                .context("Failed to initialize builder")?;
+            builder.run().await.with_context(|| {
+                format!("Codesigned attestation process for tag {} failed", tag)
+            })?;
         }
         Commands::Watch { action } => {
             let pid_file = get_config_file("watch.pid");
@@ -161,6 +178,7 @@ async fn main() -> Result<()> {
                         check_gpg_signing(&config.gpg_key_id)
                             .context("Failed to verify GPG signing capability")?;
                         info!("GPG signing check passed.");
+                        args.auto = *auto;
                     }
                     if *daemon {
                         info!("Starting BGT watcher as a daemon...");
@@ -172,7 +190,7 @@ async fn main() -> Result<()> {
                     let (mut seen_tags_bitcoin, mut seen_tags_sigs) = fetch_all_tags(&config)
                         .await
                         .context("Failed to fetch initial tags")?;
-                    initialize_builder(&config)
+                    create_builder(&config, args)
                         .await
                         .context("Failed to initialize builder")?;
                     run_watcher(&config, &mut seen_tags_bitcoin, &mut seen_tags_sigs)
@@ -186,17 +204,24 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Clean => {
-            let args = BuildArgs::default();
-            let builder = Builder::new(None, BuildAction::Clean, config.clone(), args)
-                .context("Failed to create builder for clean action")?;
+            args.action = BuildAction::Clean;
+            let builder = create_builder(&config, args)
+                .await
+                .context("Failed to initialize builder")?;
             builder.run().await.context("Failed to run clean action")?;
         }
         Commands::ShowConfig => {
             println!("{}", config);
         }
         Commands::Warmup => {
-            // TODO: Implement warmup functionality
-            info!("Warmup functionality not yet implemented");
+            args.action = BuildAction::Warmup;
+            let builder = create_builder(&config, args)
+                .await
+                .context("Failed to initialize builder")?;
+            builder
+                .run()
+                .await
+                .context("Build process for tag warmup failed")?;
         }
     }
 

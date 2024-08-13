@@ -15,24 +15,27 @@ use crate::config::Config;
 use crate::version::compare_versions;
 use crate::xor::xor_decrypt;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct BuildArgs {
+    pub action: BuildAction,
     pub auto: bool,
+    pub tag: Option<String>,
+    pub warmup: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub enum BuildAction {
-    Setup,
     Build,
     NonCodeSigned,
+    #[default]
+    None,
     CodeSigned,
     Clean,
+    Warmup,
 }
 
 pub struct Builder {
     config: Config,
-    version: Option<String>,
-    action: BuildAction,
     args: BuildArgs,
     octo: Option<Octocrab>,
 }
@@ -42,10 +45,10 @@ impl fmt::Display for Builder {
         writeln!(f, "Builder {{")?;
         writeln!(f, "  signer_name: {}", self.config.signer_name)?;
         writeln!(f, "  gpg_key_id: {}", self.config.gpg_key_id)?;
-        if self.version.is_some() {
-            writeln!(f, "  version: {:?}", self.version.clone().unwrap())?;
+        if self.args.tag.is_some() {
+            writeln!(f, "  tag: {:?}", self.args.tag.clone().unwrap())?;
         }
-        writeln!(f, "  action: {:?}", self.action)?;
+        writeln!(f, "  action: {:?}", self.args.action)?;
         writeln!(f, "  guix_build_dir: {:?}", self.config.guix_build_dir)?;
         writeln!(f, "  guix_sigs_dir: {:?}", self.config.guix_sigs_dir)?;
         writeln!(
@@ -65,15 +68,10 @@ impl fmt::Display for Builder {
 }
 
 impl Builder {
-    pub fn new(
-        version: Option<String>,
-        action: BuildAction,
-        config: Config,
-        args: BuildArgs,
-    ) -> Result<Self> {
-        if let Some(ref v) = version {
+    pub fn new(config: Config, args: BuildArgs) -> Result<Self> {
+        if let Some(ref v) = args.tag {
             if compare_versions(v, "v21.0") == Ordering::Less {
-                bail!("Can't build versions earlier than v0.21.0");
+                bail!("Can't build tags earlier than v0.21.0");
             }
         }
 
@@ -89,13 +87,7 @@ impl Builder {
             })
             .transpose()?;
 
-        Ok(Self {
-            config,
-            version,
-            action,
-            args,
-            octo,
-        })
+        Ok(Self { config, args, octo })
     }
 
     pub async fn init(&self) -> Result<()> {
@@ -307,23 +299,23 @@ impl Builder {
     }
 
     pub async fn run(&self) -> Result<()> {
-        match self.action {
-            BuildAction::Setup => {}
+        match self.args.action {
+            BuildAction::None => {}
             BuildAction::Build => {
                 self.refresh_repos()
                     .context("Failed to refresh repositories")?;
-                self.checkout_bitcoin()
+                self.checkout_bitcoin(false)
                     .context("Failed to checkout Bitcoin")?;
                 self.check_sdk().await.context("Failed to check SDK")?;
                 self.guix_build().context("Failed to build with Guix")?;
             }
             BuildAction::NonCodeSigned => {
-                self.checkout_bitcoin()
+                self.checkout_bitcoin(false)
                     .context("Failed to checkout Bitcoin")?;
                 self.guix_attest("non-codesigned").await?;
             }
             BuildAction::CodeSigned => {
-                self.checkout_bitcoin()
+                self.checkout_bitcoin(false)
                     .context("Failed to checkout Bitcoin")?;
                 self.guix_codesign()
                     .context("Failed to codesign binaries")?;
@@ -332,22 +324,44 @@ impl Builder {
             BuildAction::Clean => self
                 .guix_clean()
                 .context("Failed to clean Guix environment")?,
+            BuildAction::Warmup => {
+                self.refresh_repos()
+                    .context("Failed to refresh repositories")?;
+                self.checkout_bitcoin(true)
+                    .context("Failed to checkout Bitcoin")?;
+                self.check_sdk().await.context("Failed to check SDK")?;
+                self.guix_build().context("Failed to build with Guix")?;
+            }
         }
         Ok(())
     }
 
-    fn checkout_bitcoin(&self) -> Result<()> {
-        let version = self
-            .version
+    fn checkout_bitcoin(&self, warmup: bool) -> Result<()> {
+        if warmup {
+            info!("Warming up: Checking out master branch");
+            let mut command = Command::new("git");
+            command
+                .current_dir(&self.config.bitcoin_dir)
+                .args(["checkout", "master"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            return self
+                .run_command_with_output(command)
+                .context("Failed to checkout master branch for warmup");
+        }
+
+        let tag = self
+            .args
+            .tag
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Version is not set"))?;
-        info!("Checking out Bitcoin version {}", version);
+            .ok_or_else(|| anyhow::anyhow!("Tag not set"))?;
+        info!("Checking out Bitcoin tag {}", tag);
 
         // Fetch the tag
         let mut command = Command::new("git");
         command
             .current_dir(&self.config.bitcoin_dir)
-            .args(["fetch", "origin", "tag", version, "--no-tags", "--depth=1"])
+            .args(["fetch", "origin", "tag", tag, "--no-tags", "--depth=1"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         self.run_command_with_output(command)?;
@@ -356,12 +370,12 @@ impl Builder {
         let mut command = Command::new("git");
         command
             .current_dir(&self.config.bitcoin_dir)
-            .args(["checkout", &self.version.clone().unwrap()])
+            .args(["checkout", tag])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         self.run_command_with_output(command).context(format!(
-            "Failed to checkout version {} from bitcoin source",
-            version,
+            "Failed to checkout tag {} from bitcoin source",
+            tag,
         ))?;
 
         Ok(())
@@ -496,17 +510,18 @@ impl Builder {
         build: Option<&Octocrab>,
     ) -> Result<()> {
         info!("Committing attestations");
-        let version = self
-            .version
+        let tag = self
+            .args
+            .tag
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Version is not set"))?;
+            .ok_or_else(|| anyhow::anyhow!("Tag not set"))?;
         let branch_name = format!(
             "{}-{}-{}-attestations",
-            self.config.signer_name, version, attestation_type
+            self.config.signer_name, tag, attestation_type
         );
         let commit_message = format!(
             "Add {} attestations by {} for {}",
-            attestation_type, self.config.signer_name, version
+            attestation_type, self.config.signer_name, tag
         );
 
         // Create new branch
@@ -521,24 +536,20 @@ impl Builder {
         // Add files
         let add_files = if attestation_type == "all" {
             vec![
-                format!(
-                    "{}/{}/all.SHA256SUMS",
-                    &version[1..],
-                    &self.config.signer_name
-                ),
+                format!("{}/{}/all.SHA256SUMS", &tag[1..], &self.config.signer_name),
                 format!(
                     "{}/{}/all.SHA256SUMS.asc",
-                    &version[1..],
+                    &tag[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS",
-                    &version[1..],
+                    &tag[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS.asc",
-                    &version[1..],
+                    &tag[1..],
                     &self.config.signer_name
                 ),
             ]
@@ -546,12 +557,12 @@ impl Builder {
             vec![
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS",
-                    &version[1..],
+                    &tag[1..],
                     &self.config.signer_name
                 ),
                 format!(
                     "{}/{}/noncodesigned.SHA256SUMS.asc",
-                    &version[1..],
+                    &tag[1..],
                     &self.config.signer_name
                 ),
             ]

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
-use crate::commands::{build_tag, codesigned, non_codesigned};
+use crate::builder::{BuildAction, BuildArgs};
+use crate::commands::create_builder;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
@@ -74,13 +75,33 @@ async fn check_and_process_bitcoin_tags(
                     &config.source_repo_name
                 );
                 for tag in new_tags {
+                    // TODO: check for auto here
+                    // args.auto = true;
+
+                    // Build first
+
+                    let mut args = BuildArgs {
+                        action: BuildAction::Build,
+                        tag: Some(tag.clone()),
+                        ..Default::default()
+                    };
+                    let builder = create_builder(config, args.clone())
+                        .await
+                        .context("Failed to initialize first builder in watcher")?;
                     in_progress.insert(tag.clone());
-                    build_tag(&tag, config)
+                    builder
+                        .run()
                         .await
-                        .with_context(|| format!("Failed to build tag {}", tag))?;
-                    non_codesigned(&tag, config, false)
+                        .with_context(|| format!("Build process for tag {} failed", tag))?;
+
+                    // Then attest to noncodesigned
+                    args.action = BuildAction::NonCodeSigned;
+                    let builder = create_builder(config, args)
                         .await
-                        .with_context(|| format!("Failed to attest non-codesigned tag {}", tag))?;
+                        .context("Failed to initialize second builder in watcher")?;
+                    builder.run().await.with_context(|| {
+                        format!("Noncodesigned attestation process for tag {} failed", tag)
+                    })?;
                 }
             } else {
                 debug!(
@@ -123,9 +144,17 @@ async fn check_and_process_sigs_tags(
                 );
                 for tag in new_tags {
                     if in_progress.contains(&tag) {
-                        codesigned(&tag, config, false)
+                        let args = BuildArgs {
+                            action: BuildAction::CodeSigned,
+                            tag: Some(tag.clone()),
+                            ..Default::default()
+                        };
+                        let builder = create_builder(config, args)
                             .await
-                            .with_context(|| format!("Failed to codesign tag {}", tag))?;
+                            .context("Failed to initialize builder")?;
+                        builder.run().await.with_context(|| {
+                            format!("Codesigned attestation process for tag {} failed", tag)
+                        })?;
                         in_progress.remove(&tag);
                     } else {
                         // TODO: Consider implementing the codesigning attempt here
