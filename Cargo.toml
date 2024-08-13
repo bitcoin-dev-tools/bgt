@@ -1,6 +1,6 @@
 [package]
 name = "bgt"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Will Clark <will@256k1.dev>"]
 edition = "2021"
 description = "A tool for automated Guix builds of Bitcoin Core"
