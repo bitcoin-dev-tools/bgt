@@ -15,14 +15,14 @@ pub(crate) async fn init_wizard() -> Result<()> {
     let default_guix_build_dir = state.join("guix-builds");
 
     let gpg_key_id =
-        prompt_input_with_validation("Enter your gpg key id (e.g. 0xA1B2C3D4E5F6G7H8)", |input| {
+        prompt_input_with_validation("Enter your gpg key short id (e.g. 0xA1B2C3D4E5F6G7H8)", |input| {
             if input.starts_with("0x") {
                 Ok(())
             } else {
-                Err("GPG key id must start with '0x'")
+                Err("GPG key short id must start with '0x'")
             }
         })
-        .context("Failed to get valid GPG key id")?;
+        .context("Failed to get valid GPG key short id")?;
 
     let signer_name =
         prompt_input("Enter your signer name").context("Failed to get signer name")?;

@@ -61,7 +61,7 @@ impl fmt::Display for Config {
         writeln!(f, "{:<32} {}/{}", "Detached sigs repo:", self.detached_repo_owner, self.detached_repo_name)?;
         writeln!(f, "{:<32} {:?}",  "Poll Interval:", self.poll_interval)?;
         writeln!(f, "{:<32} {}",    "Signer Name:", self.signer_name)?;
-        writeln!(f, "{:<32} {}",    "GPG Key ID:", self.gpg_key_id)?;
+        writeln!(f, "{:<32} {}",    "GPG Key Short ID:", self.gpg_key_id)?;
         writeln!(f, "{:<32} {}",    "Guix Sigs Fork URL:", self.guix_sigs_fork_url)?;
         writeln!(f, "{:<32} {}",    "Multi-package:", self.multi_package)?;
         writeln!(f, "{:<32} {:?}",  "Guix Build Directory:", self.guix_build_dir)?;
