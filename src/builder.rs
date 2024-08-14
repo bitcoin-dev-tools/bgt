@@ -20,7 +20,6 @@ pub struct BuildArgs {
     pub action: BuildAction,
     pub auto: bool,
     pub tag: Option<String>,
-    pub warmup: bool,
 }
 
 #[derive(Debug, Clone, Default)]

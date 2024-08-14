@@ -258,7 +258,7 @@ async fn warmup(config: &Config) -> Result<()> {
         .context("Build process for tag warmup failed")
 }
 
-/// Check if GPG signing is possible with the given key ID
+/// Check if GPG signing is possible with the given key short ID
 fn check_gpg_signing(key_id: &str) -> Result<()> {
     use anyhow::bail;
     use std::process::Command;

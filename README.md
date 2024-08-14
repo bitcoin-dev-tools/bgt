@@ -52,7 +52,7 @@ Run the setup wizard to configure bgt:
 bgt setup
 ```
 
-This will guide you through setting up your GPG key ID, signer name, and other necessary configurations.
+This will guide you through setting up your GPG key short ID, signer name, and other necessary configurations.
 
 ### Build
 
