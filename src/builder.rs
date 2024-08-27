@@ -4,6 +4,7 @@ use log::{debug, error, info, warn};
 use octocrab::Octocrab;
 use regex::Regex;
 use std::cmp::Ordering;
+use std::env;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -12,6 +13,7 @@ use std::process::{Command, Stdio};
 use tar::Archive;
 
 use crate::config::Config;
+use crate::config::GH_TOKEN_NAME;
 use crate::version::compare_versions;
 use crate::xor::xor_decrypt;
 
@@ -74,15 +76,14 @@ impl Builder {
             }
         }
 
-        let octo = config
-            .github_token
-            .as_deref()
+        let octo = env::var(GH_TOKEN_NAME)
+            .ok()
             .filter(|s| !s.is_empty())
             .map(|token| {
                 Octocrab::builder()
-                    .personal_token(token.to_string())
+                    .personal_token(token)
                     .build()
-                    .context("Couldn't build Octocrab from gh_token")
+                    .context(format!("Couldn't build Octocrab from {}", GH_TOKEN_NAME))
             })
             .transpose()?;
 
@@ -526,7 +527,7 @@ impl Builder {
         // Create new branch
         let mut command = Command::new("git");
         command
-            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
+            .current_dir(self.config.guix_build_dir.join("guix.sigs"))
             .args(["checkout", "-b", &branch_name])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -572,7 +573,7 @@ impl Builder {
 
         let mut command = Command::new("git");
         command
-            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
+            .current_dir(self.config.guix_build_dir.join("guix.sigs"))
             .args(&git_add_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -581,7 +582,7 @@ impl Builder {
         // Echo the sigs
         let mut command = Command::new("cat");
         command
-            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
+            .current_dir(self.config.guix_build_dir.join("guix.sigs"))
             .args(add_files.iter().map(String::as_str))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -590,7 +591,7 @@ impl Builder {
         // Commit changes
         let mut command = Command::new("git");
         command
-            .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
+            .current_dir(self.config.guix_build_dir.join("guix.sigs"))
             .args(["commit", "-m", &commit_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -599,7 +600,7 @@ impl Builder {
             if let Some(octocrab) = build {
                 let mut command = Command::new("git");
                 command
-                    .current_dir(&self.config.guix_build_dir.join("guix.sigs"))
+                    .current_dir(self.config.guix_build_dir.join("guix.sigs"))
                     .args(["push", "--set-upstream", "origin", branch_name.as_str()])
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
@@ -628,12 +629,13 @@ impl Builder {
 
                     info!("Pull request created: {}", pull_request.html_url.unwrap());
                 } else {
-                    info!(
-                    "Changes committed locally. Use --auto to automatically push and create a PR."
-                );
+                    error!("Valid GitHub username not available. Cannot create pull request as no github_username found in config.");
                 }
             } else {
-                error!("Valid GitHub username not available. Cannot create pull request as no github_username found in config.");
+                error!(
+                    "GitHub API key ({}) not set in environment. Cannot create pull request.",
+                    GH_TOKEN_NAME
+                );
             }
         } else {
             warn!(

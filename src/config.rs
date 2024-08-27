@@ -3,6 +3,8 @@ use dirs::{config_dir, state_dir};
 use std::fmt;
 use std::{path::PathBuf, time::Duration};
 
+pub static GH_TOKEN_NAME: &str = "GH_API_TOKEN";
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub source_repo_owner: String,
@@ -21,7 +23,6 @@ pub struct Config {
     pub bitcoin_detached_sigs_dir: PathBuf,
     pub macos_sdks_dir: PathBuf,
     pub bitcoin_dir: PathBuf,
-    pub github_token: Option<String>,
     pub github_username: Option<String>,
 }
 
@@ -46,9 +47,24 @@ impl Default for Config {
             bitcoin_detached_sigs_dir: guix_build_dir.join("bitcoin-detached-sigs"),
             macos_sdks_dir: guix_build_dir.join("macos-sdks"),
             bitcoin_dir: guix_build_dir.join("bitcoin"),
-            github_token: None,
             github_username: None,
         }
+    }
+}
+
+impl Config {
+    pub fn load() -> Result<Self> {
+        let config_path = get_config_file("config.toml");
+        let config_str = std::fs::read_to_string(&config_path)
+            .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
+
+        let config: Config = toml::from_str(&config_str).context("Failed to parse config file")?;
+
+        Ok(config)
+    }
+
+    pub fn get_github_token(&self) -> Option<String> {
+        std::env::var(GH_TOKEN_NAME).ok()
     }
 }
 
@@ -70,20 +86,8 @@ impl fmt::Display for Config {
         writeln!(f, "{:<32} {:?}",  "macOS SDKs Directory:", self.macos_sdks_dir)?;
         writeln!(f, "{:<32} {:?}",  "Bitcoin Directory:", self.bitcoin_dir)?;
         writeln!(f, "{:<32} {}",    "GitHub Username:", self.github_username.as_deref().unwrap_or("None"))?;
-        writeln!(f, "{:<32} {}",    "GitHub Token:", if self.github_token.is_some() { "[redacted]" } else { "Not set" })?;
+        writeln!(f, "{:<32} {}",    "GitHub Token:", if self.get_github_token().is_some() { "[set in environment]" } else { "Not set" })?;
         Ok(())
-    }
-}
-
-impl Config {
-    pub fn load() -> Result<Self> {
-        let config_path = get_config_file("config.toml");
-        let config_str = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
-
-        let config: Config = toml::from_str(&config_str).context("Failed to parse config file")?;
-
-        Ok(config)
     }
 }
 

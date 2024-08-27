@@ -7,7 +7,7 @@
 //!
 //! For detailed usage instructions, please refer to the README.md file in the repository.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use env_logger::Env;
 use log::info;
@@ -27,7 +27,7 @@ use clap::Subcommand;
 use config::Config;
 
 use crate::commands::{create_builder, run_watcher};
-use crate::config::{get_config_file, read_config};
+use crate::config::{get_config_file, read_config, GH_TOKEN_NAME};
 use crate::daemon::{start_daemon, stop_daemon};
 use crate::fetcher::fetch_all_tags;
 use crate::wizard::init_wizard;
@@ -109,6 +109,23 @@ async fn main() -> Result<()> {
     };
     if cli.multi_package {
         config.multi_package = true;
+    }
+
+    // Check for GH_API_TOKEN early when needed
+    match &cli.command {
+        Commands::Attest { auto, .. }
+        | Commands::Codesign { auto, .. }
+        | Commands::Watch {
+            action: WatchAction::Start { auto, .. },
+        } => {
+            if *auto && std::env::var(GH_TOKEN_NAME).is_err() {
+                bail!(
+                    "{} environment variable is not set. Please set it and try again.",
+                    GH_TOKEN_NAME
+                );
+            }
+        }
+        _ => {}
     }
 
     match cli.command {

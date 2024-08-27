@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use dirs::state_dir;
 use std::{
     io::{self, Write},
     path::PathBuf,
 };
 
-use crate::config::{get_config_file, Config};
+use crate::config::{get_config_file, Config, GH_TOKEN_NAME};
 
 pub(crate) async fn init_wizard() -> Result<()> {
     println!("Welcome to the bgt config wizard!");
@@ -14,15 +14,17 @@ pub(crate) async fn init_wizard() -> Result<()> {
     let state = state_dir().unwrap_or_else(|| PathBuf::from("."));
     let default_guix_build_dir = state.join("guix-builds");
 
-    let gpg_key_id =
-        prompt_input_with_validation("Enter your gpg key short id (e.g. 0xA1B2C3D4E5F6G7H8)", |input| {
+    let gpg_key_id = prompt_input_with_validation(
+        "Enter your gpg key short id (e.g. 0xA1B2C3D4E5F6G7H8)",
+        |input| {
             if input.starts_with("0x") {
                 Ok(())
             } else {
                 Err("GPG key short id must start with '0x'")
             }
-        })
-        .context("Failed to get valid GPG key short id")?;
+        },
+    )
+    .context("Failed to get valid GPG key short id")?;
 
     let signer_name =
         prompt_input("Enter your signer name").context("Failed to get signer name")?;
@@ -60,15 +62,16 @@ pub(crate) async fn init_wizard() -> Result<()> {
     .to_lowercase()
         == "yes";
 
-    let (github_username, gh_token) = if auto_open_prs {
-        let username =
-            prompt_input("Enter your GitHub username").context("Failed to get GitHub username")?;
-        let token =
-            prompt_input("Enter your GitHub token (will be stored in config file unencrypted!)")
-                .context("Failed to get GitHub token")?;
-        (Some(username), Some(token))
+    let github_username = if auto_open_prs {
+        if std::env::var(GH_TOKEN_NAME).is_err() {
+            bail!(
+                "{} environment variable is not set. Please set it and run the wizard again.",
+                GH_TOKEN_NAME
+            );
+        }
+        Some(prompt_input("Enter your GitHub username").context("Failed to get GitHub username")?)
     } else {
-        (None, None)
+        None
     };
 
     let mut config = Config {
@@ -77,7 +80,6 @@ pub(crate) async fn init_wizard() -> Result<()> {
         guix_sigs_fork_url,
         guix_build_dir,
         github_username,
-        github_token: gh_token,
         ..Default::default()
     };
 
@@ -99,6 +101,14 @@ pub(crate) async fn init_wizard() -> Result<()> {
         .with_context(|| format!("Failed to write config to file: {:?}", config_path))?;
 
     println!("Configuration saved to: {}", config_path.display());
+    if auto_open_prs {
+        println!(
+            "GitHub API Key ({}) is set in the environment.",
+            GH_TOKEN_NAME
+        );
+    } else {
+        println!("Note: If you want to use GitHub features in the future, set the {} environment variable.", GH_TOKEN_NAME);
+    }
     Ok(())
 }
 
