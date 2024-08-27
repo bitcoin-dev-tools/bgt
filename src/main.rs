@@ -98,10 +98,11 @@ enum WatchAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     info!("Starting BGT Builder");
 
-    let cli = Cli::parse();
     let mut config = match &cli.command {
         Commands::Setup => Config::default(),
         _ => read_config().context("Failed to read config")?,
