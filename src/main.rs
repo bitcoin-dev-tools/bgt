@@ -175,7 +175,6 @@ async fn attest(config: &Config, tag: &str, auto: bool) -> Result<()> {
         action: BuildAction::NonCodeSigned,
         tag: Some(tag.to_string()),
         auto,
-        ..Default::default()
     };
     let builder = create_builder(config, args)
         .await
@@ -192,7 +191,6 @@ async fn codesign(config: &Config, tag: &str, auto: bool) -> Result<()> {
         action: BuildAction::CodeSigned,
         tag: Some(tag.to_string()),
         auto,
-        ..Default::default()
     };
     let builder = create_builder(config, args)
         .await

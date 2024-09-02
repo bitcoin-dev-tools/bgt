@@ -71,6 +71,7 @@ impl fmt::Display for Builder {
 impl Builder {
     pub fn new(config: Config, args: BuildArgs) -> Result<Self> {
         if let Some(ref v) = args.tag {
+            println!("{}", v);
             if compare_versions(v, "v21.0") == Ordering::Less {
                 bail!("Can't build tags earlier than v0.21.0");
             }
@@ -515,10 +516,7 @@ impl Builder {
             .tag
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Tag not set"))?;
-        let branch_name = format!(
-            "{}-{}-{}-attestations",
-            self.config.signer_name, tag, attestation_type
-        );
+        let branch_name = format!("{}-{}-attestations", tag, attestation_type);
         let commit_message = format!(
             "Add {} attestations by {} for {}",
             attestation_type, self.config.signer_name, tag
@@ -642,8 +640,8 @@ impl Builder {
                 r#"Changes must be manually pushed to GitHub and a PR opened.
 To push the changes, run the following commands:
     cd {:?}
-    git push origin"#,
-                &self.config.guix_sigs_dir
+    git push --set-upstream origin {}"#,
+                &self.config.guix_sigs_dir, branch_name
             );
         }
 
