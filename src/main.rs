@@ -41,6 +41,10 @@ struct Cli {
     /// Use `JOBS=1 ADDITIONAL_GUIX_COMMON_FLAGS='--max-jobs=8'`
     #[arg(long)]
     multi_package: bool,
+
+    /// Enable debug log level
+    #[arg(long, global = true)]
+    debug: bool,
 }
 
 #[derive(Subcommand)]
@@ -91,6 +95,9 @@ enum WatchAction {
         /// Attempt to automatically attest using gpg and automatically open a PR on GitHub
         #[arg(long)]
         auto: bool,
+        /// Don't perform building or signing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Stop the watcher daemon
     Stop,
@@ -99,8 +106,8 @@ enum WatchAction {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    let log_level = if cli.debug { "debug" } else { "info" };
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
     info!("Starting BGT Builder");
 
     let mut config = match &cli.command {
@@ -207,7 +214,11 @@ async fn watch(config: &Config, action: WatchAction) -> Result<()> {
     let log_file = get_config_file("watch.log");
 
     match action {
-        WatchAction::Start { daemon, auto } => {
+        WatchAction::Start {
+            auto,
+            daemon,
+            dry_run,
+        } => {
             if auto {
                 info!("Checking for automatic GPG signing capability when using --auto flag...");
                 check_gpg_signing(&config.gpg_key_id)
@@ -231,7 +242,7 @@ async fn watch(config: &Config, action: WatchAction) -> Result<()> {
             create_builder(config, args)
                 .await
                 .context("Failed to initialize builder")?;
-            run_watcher(config, &mut seen_tags_bitcoin, &mut seen_tags_sigs)
+            run_watcher(config, &mut seen_tags_bitcoin, &mut seen_tags_sigs, dry_run)
                 .await
                 .context("Watcher encountered an error")
         }

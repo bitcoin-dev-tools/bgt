@@ -300,6 +300,10 @@ impl Builder {
     }
 
     pub async fn run(&self) -> Result<()> {
+        info!(
+            "Starting build action {:?} for tag {:?}",
+            self.args.action, self.args.tag
+        );
         match self.args.action {
             BuildAction::None => {}
             BuildAction::Build => {

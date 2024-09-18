@@ -15,6 +15,7 @@ pub(crate) async fn run_watcher(
     config: &Config,
     seen_tags_bitcoin: &mut HashSet<String>,
     seen_tags_sigs: &mut HashSet<String>,
+    dry_run: bool,
 ) -> Result<()> {
     let mut in_progress: HashSet<String> = HashSet::new();
     info!(
@@ -31,12 +32,10 @@ pub(crate) async fn run_watcher(
     loop {
         tokio::select! {
             _ = sleep(config.poll_interval) => {
-                if let Err(e) = check_and_process_bitcoin_tags(config, seen_tags_bitcoin, &mut in_progress).await {
+                if let Err(e) = check_and_process_bitcoin_tags(config, seen_tags_bitcoin, &mut in_progress, dry_run).await {
                     error!("Error processing Bitcoin tags: {:?}", e);
                 }
-            }
-            _ = sleep(config.poll_interval) => {
-                if let Err(e) = check_and_process_sigs_tags(config, seen_tags_sigs, &mut in_progress).await {
+                if let Err(e) = check_and_process_sigs_tags(config, seen_tags_sigs, &mut in_progress, dry_run).await {
                     error!("Error processing sigs tags: {:?}", e);
                 }
             }
@@ -58,7 +57,9 @@ async fn check_and_process_bitcoin_tags(
     config: &Config,
     seen_tags_bitcoin: &mut HashSet<String>,
     in_progress: &mut HashSet<String>,
+    dry_run: bool,
 ) -> Result<()> {
+    info!("Checking for new bitcoin tags...");
     match check_for_new_tags(
         seen_tags_bitcoin,
         &config.source_repo_owner,
@@ -78,8 +79,11 @@ async fn check_and_process_bitcoin_tags(
                     // TODO: check for auto here
                     // args.auto = true;
 
+                    if dry_run {
+                        info!("Skipping build for tag {tag} because --dry-run is enabled");
+                        continue;
+                    }
                     // Build first
-
                     let mut args = BuildArgs {
                         action: BuildAction::Build,
                         tag: Some(tag.clone()),
@@ -87,7 +91,7 @@ async fn check_and_process_bitcoin_tags(
                     };
                     let builder = create_builder(config, args.clone())
                         .await
-                        .context("Failed to initialize first builder in watcher")?;
+                        .context("Failed to initialize first guix builder in watcher")?;
                     in_progress.insert(tag.clone());
                     builder
                         .run()
@@ -98,7 +102,7 @@ async fn check_and_process_bitcoin_tags(
                     args.action = BuildAction::NonCodeSigned;
                     let builder = create_builder(config, args)
                         .await
-                        .context("Failed to initialize second builder in watcher")?;
+                        .context("Failed to initialize non-codesigned builder in watcher")?;
                     builder.run().await.with_context(|| {
                         format!("Noncodesigned attestation process for tag {} failed", tag)
                     })?;
@@ -126,7 +130,9 @@ async fn check_and_process_sigs_tags(
     config: &Config,
     seen_tags_sigs: &mut HashSet<String>,
     in_progress: &mut HashSet<String>,
+    dry_run: bool,
 ) -> Result<()> {
+    info!("Checking for new bitcoin tags...");
     match check_for_new_tags(
         seen_tags_sigs,
         &config.detached_repo_owner,
@@ -144,6 +150,10 @@ async fn check_and_process_sigs_tags(
                 );
                 for tag in new_tags {
                     if in_progress.contains(&tag) {
+                        if dry_run {
+                            info!("Skipping build for sigs tag {tag} because --dry-run is enabled");
+                            continue;
+                        }
                         let args = BuildArgs {
                             action: BuildAction::CodeSigned,
                             tag: Some(tag.clone()),
