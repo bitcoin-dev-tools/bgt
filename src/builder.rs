@@ -17,6 +17,36 @@ use crate::config::GH_TOKEN_NAME;
 use crate::version::compare_versions;
 use crate::xor::xor_decrypt;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum AttestationType {
+    CodeSigned,
+    NonCodeSigned,
+}
+
+impl AttestationType {
+    // Get the files that need to be added for this attestation type
+    pub fn get_files(&self, tag: &str, signer_name: &str) -> Vec<String> {
+        match self {
+            AttestationType::CodeSigned => vec![
+                format!("{}/{}/all.SHA256SUMS", &tag[1..], signer_name),
+                format!("{}/{}/all.SHA256SUMS.asc", &tag[1..], signer_name),
+            ],
+            AttestationType::NonCodeSigned => vec![
+                format!("{}/{}/noncodesigned.SHA256SUMS", &tag[1..], signer_name),
+                format!("{}/{}/noncodesigned.SHA256SUMS.asc", &tag[1..], signer_name),
+            ],
+        }
+    }
+
+    // Get a descriptive string for commit messages and branch names
+    pub fn description(&self) -> &'static str {
+        match self {
+            AttestationType::CodeSigned => "codesigned",
+            AttestationType::NonCodeSigned => "non-codesigned",
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct BuildArgs {
     pub action: BuildAction,
@@ -317,14 +347,14 @@ impl Builder {
             BuildAction::NonCodeSigned => {
                 self.checkout_bitcoin(false)
                     .context("Failed to checkout Bitcoin")?;
-                self.guix_attest("non-codesigned").await?;
+                self.guix_attest(AttestationType::NonCodeSigned).await?;
             }
             BuildAction::CodeSigned => {
                 self.checkout_bitcoin(false)
                     .context("Failed to checkout Bitcoin")?;
                 self.guix_codesign()
                     .context("Failed to codesign binaries")?;
-                self.guix_attest("codesigned").await?;
+                self.guix_attest(AttestationType::CodeSigned).await?;
             }
             BuildAction::Clean => self
                 .guix_clean()
@@ -452,8 +482,8 @@ impl Builder {
         Ok(())
     }
 
-    async fn guix_attest(&self, a_type: &str) -> Result<()> {
-        info!("Attesting {} binaries", a_type);
+    async fn guix_attest(&self, a_type: AttestationType) -> Result<()> {
+        info!("Attesting {} binaries", a_type.description());
         let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-attest"));
         command
             .current_dir(&self.config.bitcoin_dir)
@@ -535,9 +565,10 @@ impl Builder {
         Ok(())
     }
 
+    // Updated implementation of commit_attestations
     async fn commit_attestations(
         &self,
-        attestation_type: &str,
+        attestation_type: AttestationType,
         build: Option<&Octocrab>,
     ) -> Result<()> {
         info!("Committing attestations");
@@ -546,10 +577,13 @@ impl Builder {
             .tag
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Tag not set"))?;
-        let branch_name = format!("{}-{}-attestations", tag, attestation_type);
+
+        let branch_name = format!("{}-{}-attestations", tag, attestation_type.description());
         let commit_message = format!(
             "Add {} attestations by {} for {}",
-            attestation_type, self.config.signer_name, tag
+            attestation_type.description(),
+            self.config.signer_name,
+            tag
         );
 
         // Create new branch
@@ -562,29 +596,7 @@ impl Builder {
         self.run_command_with_output(command)?;
 
         // Add files
-        let add_files = if attestation_type == "codesigned" {
-            vec![
-                format!("{}/{}/all.SHA256SUMS", &tag[1..], &self.config.signer_name),
-                format!(
-                    "{}/{}/all.SHA256SUMS.asc",
-                    &tag[1..],
-                    &self.config.signer_name
-                ),
-            ]
-        } else {
-            vec![
-                format!(
-                    "{}/{}/noncodesigned.SHA256SUMS",
-                    &tag[1..],
-                    &self.config.signer_name
-                ),
-                format!(
-                    "{}/{}/noncodesigned.SHA256SUMS.asc",
-                    &tag[1..],
-                    &self.config.signer_name
-                ),
-            ]
-        };
+        let add_files = attestation_type.get_files(tag, &self.config.signer_name);
 
         let mut git_add_args = vec!["add"];
         git_add_args.extend(add_files.iter().map(String::as_str));
