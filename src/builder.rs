@@ -344,15 +344,7 @@ impl Builder {
     fn checkout_bitcoin(&self, warmup: bool) -> Result<()> {
         if warmup {
             info!("Warming up: Checking out master branch");
-            let mut command = Command::new("git");
-            command
-                .current_dir(&self.config.bitcoin_dir)
-                .args(["checkout", "master"])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
-            return self
-                .run_command_with_output(command)
-                .context("Failed to checkout master branch for warmup");
+            return self.checkout_repo(&self.config.bitcoin_dir, "master", None);
         }
 
         let tag = self
@@ -362,26 +354,43 @@ impl Builder {
             .ok_or_else(|| anyhow::anyhow!("Tag not set"))?;
         info!("Checking out Bitcoin tag {}", tag);
 
-        // Fetch the tag
-        let mut command = Command::new("git");
-        command
-            .current_dir(&self.config.bitcoin_dir)
-            .args(["fetch", "origin", "tag", tag, "--no-tags", "--depth=1"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        self.run_command_with_output(command)?;
+        self.checkout_repo(&self.config.bitcoin_dir, tag, Some("origin"))
+    }
 
-        // Checkout the version
+    fn checkout_repo(
+        &self,
+        repo_path: &PathBuf,
+        ref_name: &str,
+        remote: Option<&str>,
+    ) -> Result<()> {
+        if let Some(remote_name) = remote {
+            // Fetch the ref
+            let mut command = Command::new("git");
+            command
+                .current_dir(repo_path)
+                .args([
+                    "fetch",
+                    remote_name,
+                    "tag",
+                    ref_name,
+                    "--no-tags",
+                    "--depth=1",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            self.run_command_with_output(command)
+                .context(format!("Failed to fetch {} from {}", ref_name, remote_name))?;
+        }
+
+        // Checkout the ref
         let mut command = Command::new("git");
         command
-            .current_dir(&self.config.bitcoin_dir)
-            .args(["checkout", tag])
+            .current_dir(repo_path)
+            .args(["checkout", ref_name])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        self.run_command_with_output(command).context(format!(
-            "Failed to checkout tag {} from bitcoin source",
-            tag,
-        ))?;
+        self.run_command_with_output(command)
+            .context(format!("Failed to checkout {} from source", ref_name))?;
 
         Ok(())
     }
@@ -477,6 +486,23 @@ impl Builder {
 
     fn guix_codesign(&self) -> Result<()> {
         info!("Codesigning binaries");
+
+        let tag = self
+            .args
+            .tag
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Tag not set"))?;
+        info!("Checking out Bitcoin tag {} in detached sigs repo", tag);
+
+        self.checkout_repo(
+            &self.config.guix_build_dir.join("bitcoin-detached-sigs"),
+            tag,
+            Some("origin"),
+        )
+        .context(format!(
+            "Failed to checkout tag {tag} in bitcoin-detached-sigs"
+        ))?;
+
         let mut command = Command::new(self.config.bitcoin_dir.join("contrib/guix/guix-codesign"));
         command
             .current_dir(&self.config.bitcoin_dir)
@@ -536,21 +562,11 @@ impl Builder {
         self.run_command_with_output(command)?;
 
         // Add files
-        let add_files = if attestation_type == "all" {
+        let add_files = if attestation_type == "codesigned" {
             vec![
                 format!("{}/{}/all.SHA256SUMS", &tag[1..], &self.config.signer_name),
                 format!(
                     "{}/{}/all.SHA256SUMS.asc",
-                    &tag[1..],
-                    &self.config.signer_name
-                ),
-                format!(
-                    "{}/{}/noncodesigned.SHA256SUMS",
-                    &tag[1..],
-                    &self.config.signer_name
-                ),
-                format!(
-                    "{}/{}/noncodesigned.SHA256SUMS.asc",
                     &tag[1..],
                     &self.config.signer_name
                 ),
