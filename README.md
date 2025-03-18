@@ -69,26 +69,35 @@ Replace `<tag>` with the specific version tag you want to build, e.g., `v27.1`.
 Attest to non-codesigned build outputs:
 
 ```bash
-bgt attest <tag>
+bgt attest <tag> [--auto]
 ```
+
+The `--auto` flag will automatically sign using GPG and open a PR on GitHub.
 
 ### Codesign
 
 Attach codesignatures to existing non-codesigned outputs and attest:
 
 ```bash
-bgt codesign <tag>
+bgt codesign <tag> [--auto]
 ```
+
+The `--auto` flag will automatically sign using GPG and open a PR on GitHub.
 
 ### Watch
 
 Run a continuous watcher to monitor for new tags and automatically build them, optionally as a background daemon:
 
 ```bash
-bgt watch start <--daemon>
+bgt watch start [--daemon] [--auto] [--dry-run]
 ```
 
-Stop a background watcher daemon
+Where:
+- `--daemon` runs the watcher as a background process
+- `--auto` automatically signs using GPG and opens PRs on GitHub
+- `--dry-run` monitors for new tags without performing builds or signing
+
+Stop a background watcher daemon:
 
 ```bash
 bgt watch stop
@@ -112,9 +121,18 @@ View the current configuration settings:
 bgt show-config
 ```
 
+### Warmup
+
+Guix build current master to populate Guix caches:
+
+```bash
+bgt warmup
+```
+
 ## Additional Options
 
 - `--multi-package`: Use `JOBS=1 ADDITIONAL_GUIX_COMMON_FLAGS='--max-jobs=8'` for building. This can be added to any command.
+- `--debug`: Enable debug log level. This can be added to any command.
 
 ## Logging
 
