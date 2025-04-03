@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use log::{debug, info};
-use serde_json::Value;
+use octocrab::Octocrab;
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use tokio::sync::Mutex;
 
 use crate::config::{get_config_file_path, Config};
 use crate::version::compare_versions;
@@ -18,6 +18,10 @@ use crate::version::compare_versions;
 pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet<String>)> {
     let mut bitcoin_tags = HashSet::new();
     let mut sig_tags = HashSet::new();
+
+    let octocrab = Octocrab::builder()
+        .build()
+        .context("Failed to create GitHub API client")?;
 
     for (repo_type, owner, name, tags_file, tag_set) in [
         (
@@ -47,31 +51,43 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
 
         info!("Fetching all tags from {}/{} repository...", owner, name);
 
-        let output = Command::new("curl")
-            .args([
-                "-H",
-                "User-Agent: BGT-Builder",
-                &format!(
-                    "https://api.github.com/repos/{}/{}/git/refs/tags",
-                    owner, name
-                ),
-            ])
-            .output()
-            .context("Failed to execute curl command")?;
-
-        let tags: Vec<Value> = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse JSON response from GitHub API")?;
+        let tag_list = octocrab
+            .repos(owner, name)
+            .list_tags()
+            .per_page(100) // GitHub maximum per page
+            .send()
+            .await
+            .context("Failed to fetch repository tags")?;
 
         let mut new_tags = Vec::new();
-        for tag in &tags {
-            if let Some(ref_value) = tag.get("ref") {
-                if let Some(ref_str) = ref_value.as_str() {
-                    let tag_name = ref_str.trim_start_matches("refs/tags/").to_string();
+
+        for tag in tag_list.items {
+            let tag_name = tag.name;
+            if existing_tags.insert(tag_name.clone()) {
+                new_tags.push(tag_name.clone());
+                tag_set.insert(tag_name);
+            }
+        }
+
+        let mut next_page = tag_list.next;
+        while let Some(next_page_url) = next_page {
+            let tag_list = octocrab
+                .get_page::<octocrab::models::repos::Tag>(&Some(next_page_url))
+                .await
+                .context("Failed to fetch next page of repository tags")?;
+
+            if let Some(page) = tag_list {
+                for tag in &page.items {
+                    let tag_name = tag.name.clone();
                     if existing_tags.insert(tag_name.clone()) {
                         new_tags.push(tag_name.clone());
                         tag_set.insert(tag_name);
                     }
                 }
+
+                next_page = page.next;
+            } else {
+                break;
             }
         }
 
@@ -134,35 +150,54 @@ pub async fn check_for_new_tags(
     repo_owner: &str,
     repo_name: &str,
 ) -> Result<Vec<String>> {
-    let output = Command::new("curl")
-        .args([
-            "-H",
-            "User-Agent: BGT-Builder",
-            &format!(
-                "https://api.github.com/repos/{}/{}/git/refs/tags",
-                repo_owner, repo_name
-            ),
-        ])
-        .output()
-        .context("Failed to execute curl command to fetch tags")?;
+    let octocrab = Octocrab::builder()
+        .build()
+        .context("Failed to create GitHub API client")?;
 
-    let tags: Vec<Value> = serde_json::from_slice(&output.stdout)
-        .context("Failed to parse JSON response from GitHub API")?;
+    // Use a mutex for the seen_tags since we'll be updating it in a loop
+    let seen_tags = Mutex::new(seen_tags);
 
-    info!("Fetched {} tags", tags.len());
+    let mut all_tags = Vec::new();
     let mut new_tags = Vec::new();
-    for tag in tags {
-        let tag_name = tag["ref"]
-            .as_str()
-            .context("Failed to extract tag name from GitHub API response")?
-            .trim_start_matches("refs/tags/")
-            .to_string();
-        if !seen_tags.contains(&tag_name) {
-            info!("New tag detected: {}", tag_name);
-            new_tags.push(tag_name.clone());
-            seen_tags.insert(tag_name);
+
+    let tag_list = octocrab
+        .repos(repo_owner, repo_name)
+        .list_tags()
+        .per_page(100) // GitHub maximum per page
+        .send()
+        .await
+        .context("Failed to fetch repository tags")?;
+
+    all_tags.extend(tag_list.items);
+
+    let mut next_page = tag_list.next;
+    while let Some(next_page_url) = next_page {
+        let tag_list = octocrab
+            .get_page::<octocrab::models::repos::Tag>(&Some(next_page_url))
+            .await
+            .context("Failed to fetch next page of repository tags")?;
+
+        if let Some(page) = tag_list {
+            all_tags.extend(page.items);
+            next_page = page.next;
+        } else {
+            break;
         }
     }
+
+    info!("Fetched {} tags", all_tags.len());
+
+    // Process all tags
+    let mut seen_tags_guard = seen_tags.lock().await;
+    for tag in all_tags {
+        let tag_name = tag.name;
+        if !seen_tags_guard.contains(&tag_name) {
+            info!("New tag detected: {}", tag_name);
+            new_tags.push(tag_name.clone());
+            seen_tags_guard.insert(tag_name);
+        }
+    }
+
     Ok(new_tags)
 }
 
