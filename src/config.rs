@@ -3,7 +3,7 @@ use dirs::{config_dir, state_dir};
 use std::fmt;
 use std::{path::PathBuf, time::Duration};
 
-pub static GH_TOKEN_NAME: &str = "GH_API_TOKEN";
+pub static GH_TOKEN_NAME: &str = "GITHUB_BGT_TOKEN";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
@@ -86,7 +86,7 @@ impl fmt::Display for Config {
         writeln!(f, "{:<32} {:?}",  "macOS SDKs Directory:", self.macos_sdks_dir)?;
         writeln!(f, "{:<32} {:?}",  "Bitcoin Directory:", self.bitcoin_dir)?;
         writeln!(f, "{:<32} {}",    "GitHub Username:", self.github_username.as_deref().unwrap_or("None"))?;
-        writeln!(f, "{:<32} {}",    "GitHub Token:", if self.get_github_token().is_some() { "[set in environment]" } else { "Not set" })?;
+        writeln!(f, "{:<32} {}",    "GitHub Token:", if self.get_github_token().is_some() { "[set using env var]" } else { "Not set" })?;
         Ok(())
     }
 }

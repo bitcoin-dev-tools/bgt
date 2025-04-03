@@ -25,6 +25,7 @@ mod xor;
 use builder::{BuildAction, BuildArgs};
 use clap::Subcommand;
 use config::Config;
+use octocrab::Octocrab;
 
 use crate::commands::{create_builder, run_watcher};
 use crate::config::{get_config_file_path, read_config, GH_TOKEN_NAME};
@@ -232,19 +233,29 @@ async fn watch(config: &Config, action: WatchAction) -> Result<()> {
             } else {
                 info!("Starting BGT watcher in the foreground...");
             }
-            let (mut seen_tags_bitcoin, mut seen_tags_sigs) = fetch_all_tags(config)
+
+            let mut builder = Octocrab::builder();
+            if let Some(token) = config.get_github_token() {
+                builder = builder.personal_token(token);
+            } else {
+                panic!("no token found!");
+            }
+            let octocrab = builder
+                .build()
+                .context("Failed to create GitHub API client")?;
+
+            let (mut seen_tags_bitcoin, mut seen_tags_sigs) = fetch_all_tags(config, &octocrab)
                 .await
                 .context("Failed to fetch initial tags")?;
-            let args = BuildArgs {
-                auto,
-                ..Default::default()
-            };
-            create_builder(config, args)
-                .await
-                .context("Failed to initialize builder")?;
-            run_watcher(config, &mut seen_tags_bitcoin, &mut seen_tags_sigs, dry_run)
-                .await
-                .context("Watcher encountered an error")
+            run_watcher(
+                config,
+                &octocrab,
+                &mut seen_tags_bitcoin,
+                &mut seen_tags_sigs,
+                dry_run,
+            )
+            .await
+            .context("Watcher encountered an error")
         }
         WatchAction::Stop => {
             info!("Stopping BGT watcher daemon...");

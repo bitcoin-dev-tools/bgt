@@ -5,6 +5,7 @@ use crate::commands::create_builder;
 use crate::config::Config;
 use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
+use octocrab::Octocrab;
 use tokio::signal;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::sleep;
@@ -13,6 +14,7 @@ use crate::fetcher::check_for_new_tags;
 
 pub(crate) async fn run_watcher(
     config: &Config,
+    octocrab: &Octocrab,
     seen_tags_bitcoin: &mut HashSet<String>,
     seen_tags_sigs: &mut HashSet<String>,
     dry_run: bool,
@@ -32,10 +34,10 @@ pub(crate) async fn run_watcher(
     loop {
         tokio::select! {
             _ = sleep(config.poll_interval) => {
-                if let Err(e) = check_and_process_bitcoin_tags(config, seen_tags_bitcoin, &mut in_progress, dry_run).await {
+                if let Err(e) = check_and_process_bitcoin_tags(config, octocrab, seen_tags_bitcoin, &mut in_progress, dry_run).await {
                     error!("Error processing Bitcoin tags: {:?}", e);
                 }
-                if let Err(e) = check_and_process_sigs_tags(config, seen_tags_sigs, &mut in_progress, dry_run).await {
+                if let Err(e) = check_and_process_sigs_tags(config, octocrab, seen_tags_sigs, &mut in_progress, dry_run).await {
                     error!("Error processing sigs tags: {:?}", e);
                 }
             }
@@ -55,6 +57,7 @@ pub(crate) async fn run_watcher(
 
 async fn check_and_process_bitcoin_tags(
     config: &Config,
+    octocrab: &Octocrab,
     seen_tags_bitcoin: &mut HashSet<String>,
     in_progress: &mut HashSet<String>,
     dry_run: bool,
@@ -64,6 +67,7 @@ async fn check_and_process_bitcoin_tags(
         seen_tags_bitcoin,
         &config.source_repo_owner,
         &config.source_repo_name,
+        octocrab,
     )
     .await
     {
@@ -128,6 +132,7 @@ async fn check_and_process_bitcoin_tags(
 
 async fn check_and_process_sigs_tags(
     config: &Config,
+    octocrab: &Octocrab,
     seen_tags_sigs: &mut HashSet<String>,
     in_progress: &mut HashSet<String>,
     dry_run: bool,
@@ -137,6 +142,7 @@ async fn check_and_process_sigs_tags(
         seen_tags_sigs,
         &config.detached_repo_owner,
         &config.detached_repo_name,
+        octocrab,
     )
     .await
     {

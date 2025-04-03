@@ -15,13 +15,12 @@ use crate::version::compare_versions;
 /// # Returns
 ///
 /// A Result tuple of HashSets of all known tags for each of the two repos, or an error if the fetch failed.
-pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet<String>)> {
+pub async fn fetch_all_tags(
+    config: &Config,
+    octocrab: &Octocrab,
+) -> Result<(HashSet<String>, HashSet<String>)> {
     let mut bitcoin_tags = HashSet::new();
     let mut sig_tags = HashSet::new();
-
-    let octocrab = Octocrab::builder()
-        .build()
-        .context("Failed to create GitHub API client")?;
 
     for (repo_type, owner, name, tags_file, tag_set) in [
         (
@@ -149,11 +148,8 @@ pub async fn check_for_new_tags(
     seen_tags: &mut HashSet<String>,
     repo_owner: &str,
     repo_name: &str,
+    octocrab: &Octocrab,
 ) -> Result<Vec<String>> {
-    let octocrab = Octocrab::builder()
-        .build()
-        .context("Failed to create GitHub API client")?;
-
     // Use a mutex for the seen_tags since we'll be updating it in a loop
     let seen_tags = Mutex::new(seen_tags);
 
