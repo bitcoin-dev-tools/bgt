@@ -27,7 +27,7 @@ use clap::Subcommand;
 use config::Config;
 
 use crate::commands::{create_builder, run_watcher};
-use crate::config::{get_config_file, read_config, GH_TOKEN_NAME};
+use crate::config::{get_config_file_path, read_config, GH_TOKEN_NAME};
 use crate::daemon::{start_daemon, stop_daemon};
 use crate::fetcher::fetch_all_tags;
 use crate::wizard::init_wizard;
@@ -210,8 +210,8 @@ async fn codesign(config: &Config, tag: &str, auto: bool) -> Result<()> {
 
 /// Run a continuous watcher to monitor for new tags and automatically build them
 async fn watch(config: &Config, action: WatchAction) -> Result<()> {
-    let pid_file = get_config_file("watch.pid");
-    let log_file = get_config_file("watch.log");
+    let pid_file = get_config_file_path("watch.pid");
+    let log_file = get_config_file_path("watch.log");
 
     match action {
         WatchAction::Start {

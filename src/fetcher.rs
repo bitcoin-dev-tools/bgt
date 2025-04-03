@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::config::{get_config_file, Config};
+use crate::config::{get_config_file_path, Config};
 use crate::version::compare_versions;
 
 /// Fetches all tags from the GitHub repository and updates the known tags file.
@@ -38,7 +38,7 @@ pub async fn fetch_all_tags(config: &Config) -> Result<(HashSet<String>, HashSet
         info!("Processing {} repository", repo_type);
 
         info!("Reading existing known tags from file...");
-        let path = get_config_file(tags_file);
+        let path = get_config_file_path(tags_file);
         let mut existing_tags = read_known_tags(&path).unwrap_or_else(|_| {
             info!("No existing tags file found, starting fresh.");
             HashSet::new()

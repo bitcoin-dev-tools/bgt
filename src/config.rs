@@ -54,7 +54,7 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let config_path = get_config_file("config.toml");
+        let config_path = get_config_file_path("config.toml");
         let config_str = std::fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
 
@@ -91,7 +91,7 @@ impl fmt::Display for Config {
     }
 }
 
-pub(crate) fn get_config_file(file: &str) -> PathBuf {
+pub(crate) fn get_config_file_path(file: &str) -> PathBuf {
     let mut path = config_dir().unwrap_or_else(|| PathBuf::from("."));
     path.push("bgt");
     std::fs::create_dir_all(&path).expect("Failed to create config directory");

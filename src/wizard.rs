@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::config::{get_config_file, Config, GH_TOKEN_NAME};
+use crate::config::{get_config_file_path, Config, GH_TOKEN_NAME};
 
 pub(crate) async fn init_wizard() -> Result<()> {
     println!("Welcome to the bgt config wizard!");
@@ -94,7 +94,7 @@ pub(crate) async fn init_wizard() -> Result<()> {
     config.bitcoin_dir = config.guix_build_dir.join("bitcoin");
 
     // Write config to file
-    let config_path = get_config_file("config.toml");
+    let config_path = get_config_file_path("config.toml");
     let config_str =
         toml::to_string_pretty(&config).context("Failed to serialize config to TOML")?;
     std::fs::write(&config_path, config_str)
