@@ -132,7 +132,7 @@ async fn check_and_process_sigs_tags(
     in_progress: &mut HashSet<String>,
     dry_run: bool,
 ) -> Result<()> {
-    info!("Checking for new bitcoin tags...");
+    info!("Checking for new detached sigs tags...");
     match check_for_new_tags(
         seen_tags_sigs,
         &config.detached_repo_owner,
