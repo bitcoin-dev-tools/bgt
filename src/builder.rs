@@ -467,6 +467,7 @@ impl Builder {
                 "BASE_CACHE",
                 self.config.guix_build_dir.join("depends-base-cache"),
             )
+            .env_remove("SOURCE_DATE_EPOCH")
             .env("SDK_PATH", self.config.guix_build_dir.join("macos-sdks"))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
