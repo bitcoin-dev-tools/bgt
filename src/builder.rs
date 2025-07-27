@@ -504,6 +504,7 @@ impl Builder {
                     self.config.signer_name.as_str()
                 ),
             )
+            .env_remove("SOURCE_DATE_EPOCH")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -545,6 +546,7 @@ impl Builder {
                     .to_str()
                     .unwrap(),
             )
+            .env_remove("SOURCE_DATE_EPOCH")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
