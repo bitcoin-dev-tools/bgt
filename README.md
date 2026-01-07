@@ -16,7 +16,9 @@ It can build, attest, and codesign tagged Bitcoin Core releases.
 - (optional) For attesting (signing) you will need a GPG key configured in your default keyring.
 - You will need a fork of the [bitcoin-core/guix.sigs](https://github.com/bitcoin-core/guix.sigs) repository.
   - For pull requests to this repository, you will need your GPG key to be in the guix.sigs [builder-keys](https://github.com/bitcoin-core/guix.sigs/tree/main/builder-keys) which can be done via a pull request.
-- (optional) To use `--auto` mode (automatically open pull requests against guix.sigs) you will need a github token with the appropriate permissions (repo).
+- (optional) To use `--auto` mode (automatically open pull requests against guix.sigs) you will need a GitHub personal access token. Set it via the `GITHUB_BGT_TOKEN` environment variable or `github_token` in the config file.
+  - **Fine-grained token**: Grant access only to your guix.sigs fork with `Contents` (read/write) and `Pull requests` (read/write) permissions. **Important**: Token lifetime must be 366 days or less (bitcoin org policy).
+  - **Classic token**: The `public_repo` scope is sufficient.
 
 ## Installation
 

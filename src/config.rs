@@ -24,6 +24,7 @@ pub struct Config {
     pub macos_sdks_dir: PathBuf,
     pub bitcoin_dir: PathBuf,
     pub github_username: Option<String>,
+    pub github_token: Option<String>,
 }
 
 impl Default for Config {
@@ -48,6 +49,7 @@ impl Default for Config {
             macos_sdks_dir: guix_build_dir.join("macos-sdks"),
             bitcoin_dir: guix_build_dir.join("bitcoin"),
             github_username: None,
+            github_token: None,
         }
     }
 }
@@ -63,8 +65,11 @@ impl Config {
         Ok(config)
     }
 
+    /// Get GitHub token, preferring env var over config file
     pub fn get_github_token(&self) -> Option<String> {
-        std::env::var(GH_TOKEN_NAME).ok()
+        std::env::var(GH_TOKEN_NAME)
+            .ok()
+            .or_else(|| self.github_token.clone())
     }
 }
 
@@ -86,7 +91,14 @@ impl fmt::Display for Config {
         writeln!(f, "{:<32} {:?}",  "macOS SDKs Directory:", self.macos_sdks_dir)?;
         writeln!(f, "{:<32} {:?}",  "Bitcoin Directory:", self.bitcoin_dir)?;
         writeln!(f, "{:<32} {}",    "GitHub Username:", self.github_username.as_deref().unwrap_or("None"))?;
-        writeln!(f, "{:<32} {}",    "GitHub Token:", if self.get_github_token().is_some() { "[set using env var]" } else { "Not set" })?;
+        let token_status = if std::env::var(GH_TOKEN_NAME).is_ok() {
+            "[set via env var]"
+        } else if self.github_token.is_some() {
+            "[set in config]"
+        } else {
+            "Not set"
+        };
+        writeln!(f, "{:<32} {}",    "GitHub Token:", token_status)?;
         Ok(())
     }
 }

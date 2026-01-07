@@ -4,7 +4,6 @@ use log::{debug, error, info, warn};
 use octocrab::Octocrab;
 use regex::Regex;
 use std::cmp::Ordering;
-use std::env;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -107,14 +106,14 @@ impl Builder {
             }
         }
 
-        let octo = env::var(GH_TOKEN_NAME)
-            .ok()
+        let octo = config
+            .get_github_token()
             .filter(|s| !s.is_empty())
             .map(|token| {
                 Octocrab::builder()
                     .personal_token(token)
                     .build()
-                    .context(format!("Couldn't build Octocrab from {}", GH_TOKEN_NAME))
+                    .context("Couldn't build Octocrab from GitHub token")
             })
             .transpose()?;
 
@@ -666,7 +665,7 @@ impl Builder {
                 }
             } else {
                 error!(
-                    "GitHub API key ({}) not set in environment. Cannot create pull request.",
+                    "GitHub token not available. Set {} env var or github_token in config.",
                     GH_TOKEN_NAME
                 );
             }

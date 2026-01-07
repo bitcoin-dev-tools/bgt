@@ -119,16 +119,16 @@ async fn main() -> Result<()> {
         config.multi_package = true;
     }
 
-    // Check for GH_API_TOKEN early when needed
+    // Check for GitHub token early when needed
     match &cli.command {
         Commands::Attest { auto, .. }
         | Commands::Codesign { auto, .. }
         | Commands::Watch {
             action: WatchAction::Start { auto, .. },
         } => {
-            if *auto && std::env::var(GH_TOKEN_NAME).is_err() {
+            if *auto && config.get_github_token().is_none() {
                 bail!(
-                    "{} environment variable is not set. Please set it and try again.",
+                    "GitHub token not set. Set {} environment variable or github_token in config.",
                     GH_TOKEN_NAME
                 );
             }
@@ -252,6 +252,7 @@ async fn watch(config: &Config, action: WatchAction) -> Result<()> {
                 &octocrab,
                 &mut seen_tags_bitcoin,
                 &mut seen_tags_sigs,
+                auto,
                 dry_run,
             )
             .await
