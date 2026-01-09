@@ -147,11 +147,9 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
- "daemonize",
  "dirs",
  "env_logger",
  "flate2",
- "libc",
  "log",
  "octocrab",
  "regex",
@@ -277,15 +275,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "daemonize"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab8bfdaacb3c887a54d41bdf48d3af8873b3f5566469f8ba21b92057509f116e"
-dependencies = [
- "libc",
 ]
 
 [[package]]

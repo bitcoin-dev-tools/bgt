@@ -17,8 +17,8 @@ It can build, attest, and codesign tagged Bitcoin Core releases.
 - You will need a fork of the [bitcoin-core/guix.sigs](https://github.com/bitcoin-core/guix.sigs) repository.
   - For pull requests to this repository, you will need your GPG key to be in the guix.sigs [builder-keys](https://github.com/bitcoin-core/guix.sigs/tree/main/builder-keys) which can be done via a pull request.
 - (optional) To use `--auto` mode (automatically open pull requests against guix.sigs) you will need a GitHub personal access token. Set it via the `GITHUB_BGT_TOKEN` environment variable or `github_token` in the config file.
-  - **Fine-grained token**: Grant access only to your guix.sigs fork with `Contents` (read/write) and `Pull requests` (read/write) permissions. **Important**: Token lifetime must be 366 days or less (bitcoin org policy).
-  - **Classic token**: The `public_repo` scope is sufficient.
+  - **Classic token (recommended)**: The `public_repo` scope is sufficient and allows creating PRs against upstream repos.
+  - **Fine-grained token**: Not recommended - these tokens cannot create PRs on repos they don't have explicit access to, even for public repos.
 
 ## Installation
 
@@ -88,24 +88,20 @@ The `--auto` flag will automatically sign using GPG and open a PR on GitHub.
 
 ### Watch
 
-Run a continuous watcher to monitor for new tags and automatically build them, optionally as a background daemon:
+Run a continuous watcher to monitor for new tags and automatically build them:
 
 ```bash
-bgt watch start [--daemon] [--auto] [--dry-run]
+bgt watch start [--auto] [--dry-run] [--log-file <PATH>]
 ```
 
 Where:
-- `--daemon` runs the watcher as a background process
 - `--auto` automatically signs using GPG and opens PRs on GitHub
 - `--dry-run` monitors for new tags without performing builds or signing
-
-Stop a background watcher daemon:
-
-```bash
-bgt watch stop
-```
+- `--log-file <PATH>` writes logs to the specified file instead of stderr
 
 This command will poll the GitHub API for new tags and automatically build, attest, and codesign new releases.
+
+To run in the background, use a process manager like systemd, supervisor, or tmux (see [Running as a background service](#running-as-a-background-service) below).
 
 ### Clean
 
@@ -145,6 +141,62 @@ RUST_LOG=debug bgt build v27.1
 ```
 
 This will run the build command with debug-level logging.
+
+## Running as a background service
+
+To run the watcher in the background, use a process manager. Here are some options:
+
+### Using systemd (Linux)
+
+Create a user service file at `~/.config/systemd/user/bgt-watch.service`:
+
+```ini
+[Unit]
+Description=BGT Bitcoin Guix Builder Watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/path/to/bgt watch start --auto
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable and start it:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable bgt-watch
+systemctl --user start bgt-watch
+systemctl --user status bgt-watch
+```
+
+View logs with:
+
+```bash
+journalctl --user -u bgt-watch -f
+```
+
+### Using tmux or screen
+
+```bash
+# tmux
+tmux new-session -d -s bgt 'bgt watch start --auto'
+
+# screen
+screen -dmS bgt bgt watch start --auto
+```
+
+### With log file
+
+For any method, you can use `--log-file` to write logs to a file:
+
+```bash
+bgt watch start --auto --log-file ~/.config/bgt/watch.log
+```
 
 ## Contributing
 

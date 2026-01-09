@@ -15,7 +15,6 @@ use log::info;
 mod builder;
 mod commands;
 mod config;
-mod daemon;
 mod fetcher;
 mod version;
 mod watcher;
@@ -28,8 +27,7 @@ use config::Config;
 use octocrab::Octocrab;
 
 use crate::commands::{create_builder, run_watcher};
-use crate::config::{get_config_file_path, read_config, GH_TOKEN_NAME};
-use crate::daemon::{start_daemon, stop_daemon};
+use crate::config::{read_config, GH_TOKEN_NAME};
 use crate::fetcher::fetch_all_tags;
 use crate::wizard::init_wizard;
 
@@ -88,27 +86,47 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum WatchAction {
-    /// Start the watcher daemon
+    /// Start the watcher (runs in foreground, use systemd/supervisor for background)
     Start {
-        /// Daemonize to background process
-        #[arg(long)]
-        daemon: bool,
         /// Attempt to automatically attest using gpg and automatically open a PR on GitHub
         #[arg(long)]
         auto: bool,
         /// Don't perform building or signing
         #[arg(long)]
         dry_run: bool,
+        /// Write logs to a file instead of stderr
+        #[arg(long)]
+        log_file: Option<std::path::PathBuf>,
     },
-    /// Stop the watcher daemon
-    Stop,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let log_level = if cli.debug { "debug" } else { "info" };
-    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+
+    // Check if we need to log to a file (only for watch start --log-file)
+    let log_file = match &cli.command {
+        Commands::Watch {
+            action: WatchAction::Start { log_file, .. },
+        } => log_file.clone(),
+        _ => None,
+    };
+
+    if let Some(ref path) = log_file {
+        use std::fs::OpenOptions;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Failed to open log file: {:?}", path))?;
+        env_logger::Builder::from_env(Env::default().default_filter_or(log_level))
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .init();
+    } else {
+        env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+    }
+
     info!("Starting BGT Builder");
 
     let mut config = match &cli.command {
@@ -211,14 +229,11 @@ async fn codesign(config: &Config, tag: &str, auto: bool) -> Result<()> {
 
 /// Run a continuous watcher to monitor for new tags and automatically build them
 async fn watch(config: &Config, action: WatchAction) -> Result<()> {
-    let pid_file = get_config_file_path("watch.pid");
-    let log_file = get_config_file_path("watch.log");
-
     match action {
         WatchAction::Start {
             auto,
-            daemon,
             dry_run,
+            log_file: _, // Handled in main() for logger initialization
         } => {
             if auto {
                 info!("Checking for automatic GPG signing capability when using --auto flag...");
@@ -226,13 +241,8 @@ async fn watch(config: &Config, action: WatchAction) -> Result<()> {
                     .context("Failed to verify GPG signing capability")?;
                 info!("GPG signing check passed.");
             }
-            if daemon {
-                info!("Starting BGT watcher as a daemon...");
-                info!("View logs at: {}.", log_file.display());
-                start_daemon(&pid_file, &log_file).context("Failed to start daemon")?;
-            } else {
-                info!("Starting BGT watcher in the foreground...");
-            }
+
+            info!("Starting BGT watcher...");
 
             let mut builder = Octocrab::builder();
             if let Some(token) = config.get_github_token() {
@@ -257,10 +267,6 @@ async fn watch(config: &Config, action: WatchAction) -> Result<()> {
             )
             .await
             .context("Watcher encountered an error")
-        }
-        WatchAction::Stop => {
-            info!("Stopping BGT watcher daemon...");
-            stop_daemon(&pid_file).context("Failed to stop daemon")
         }
     }
 }
