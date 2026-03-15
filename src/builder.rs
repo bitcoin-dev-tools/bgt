@@ -655,7 +655,7 @@ impl Builder {
                             format!("{}:{}", github_user, branch_name),
                             "main",
                         )
-                        .body("Automatically created pull request for new attestations.")
+                        .body(&commit_message)
                         .send()
                         .await?;
 
