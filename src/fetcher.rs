@@ -5,7 +5,6 @@ use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use tokio::sync::Mutex;
 
 use crate::config::{get_config_file_path, Config};
 use crate::version::compare_versions;
@@ -145,14 +144,11 @@ pub async fn fetch_all_tags(
 ///
 /// A Result containing a Vector of new tags, or an error if the check failed.
 pub async fn check_for_new_tags(
-    seen_tags: &mut HashSet<String>,
+    seen_tags: &HashSet<String>,
     repo_owner: &str,
     repo_name: &str,
     octocrab: &Octocrab,
 ) -> Result<Vec<String>> {
-    // Use a mutex for the seen_tags since we'll be updating it in a loop
-    let seen_tags = Mutex::new(seen_tags);
-
     let mut all_tags = Vec::new();
     let mut new_tags = Vec::new();
 
@@ -181,16 +177,18 @@ pub async fn check_for_new_tags(
         }
     }
 
-    info!("Fetched {} tags", all_tags.len());
+    debug!(
+        "Fetched {} tags from {}/{}",
+        all_tags.len(),
+        repo_owner,
+        repo_name
+    );
 
-    // Process all tags
-    let mut seen_tags_guard = seen_tags.lock().await;
     for tag in all_tags {
         let tag_name = tag.name;
-        if !seen_tags_guard.contains(&tag_name) {
-            info!("New tag detected: {}", tag_name);
+        if !seen_tags.contains(&tag_name) {
+            debug!("New tag detected: {}", tag_name);
             new_tags.push(tag_name.clone());
-            seen_tags_guard.insert(tag_name);
         }
     }
 

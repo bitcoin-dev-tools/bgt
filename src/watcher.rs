@@ -15,7 +15,9 @@ use crate::fetcher::check_for_new_tags;
 /// Check if build outputs exist on disk for a given tag.
 fn build_exists_on_disk(config: &Config, tag: &str) -> bool {
     let version = tag.strip_prefix('v').unwrap_or(tag);
-    let output_dir = config.bitcoin_dir.join(format!("guix-build-{}/output", version));
+    let output_dir = config
+        .bitcoin_dir
+        .join(format!("guix-build-{}/output", version));
 
     if !output_dir.exists() {
         debug!("Build output directory does not exist: {:?}", output_dir);
@@ -62,11 +64,19 @@ pub(crate) async fn run_watcher(
     loop {
         tokio::select! {
             _ = sleep(config.poll_interval) => {
-                if let Err(e) = check_and_process_bitcoin_tags(config, octocrab, seen_tags_bitcoin, &mut in_progress, dry_run, auto).await {
-                    error!("Error processing Bitcoin tags: {:?}", e);
-                }
-                if let Err(e) = check_and_process_sigs_tags(config, octocrab, seen_tags_sigs, &mut in_progress, dry_run, auto).await {
-                    error!("Error processing sigs tags: {:?}", e);
+                loop {
+                    let mut processed_tags = false;
+                    match check_and_process_bitcoin_tags(config, octocrab, seen_tags_bitcoin, &mut in_progress, dry_run, auto).await {
+                        Ok(processed) => processed_tags |= processed,
+                        Err(e) => error!("Error processing Bitcoin tags: {:?}", e),
+                    }
+                    match check_and_process_sigs_tags(config, octocrab, seen_tags_sigs, &mut in_progress, dry_run, auto).await {
+                        Ok(processed) => processed_tags |= processed,
+                        Err(e) => error!("Error processing sigs tags: {:?}", e),
+                    }
+                    if !processed_tags {
+                        break;
+                    }
                 }
             }
             _ = signal::ctrl_c() => {
@@ -90,8 +100,8 @@ async fn check_and_process_bitcoin_tags(
     in_progress: &mut HashSet<String>,
     dry_run: bool,
     auto: bool,
-) -> Result<()> {
-    info!("Checking for new bitcoin tags...");
+) -> Result<bool> {
+    debug!("Checking for new bitcoin tags...");
     match check_for_new_tags(
         seen_tags_bitcoin,
         &config.source_repo_owner,
@@ -111,9 +121,10 @@ async fn check_and_process_bitcoin_tags(
                 for tag in new_tags {
                     if dry_run {
                         info!("Skipping build for tag {tag} because --dry-run is enabled");
+                        seen_tags_bitcoin.insert(tag);
                         continue;
                     }
-                    // Build first
+                    info!("Processing bitcoin tag {tag}");
                     let mut args = BuildArgs {
                         action: BuildAction::Build,
                         tag: Some(tag.clone()),
@@ -122,13 +133,11 @@ async fn check_and_process_bitcoin_tags(
                     let builder = create_builder(config, args.clone())
                         .await
                         .context("Failed to initialize first guix builder in watcher")?;
-                    in_progress.insert(tag.clone());
                     builder
                         .run()
                         .await
                         .with_context(|| format!("Build process for tag {} failed", tag))?;
 
-                    // Then attest to noncodesigned
                     args.action = BuildAction::NonCodeSigned;
                     let builder = create_builder(config, args)
                         .await
@@ -136,7 +145,10 @@ async fn check_and_process_bitcoin_tags(
                     builder.run().await.with_context(|| {
                         format!("Noncodesigned attestation process for tag {} failed", tag)
                     })?;
+                    in_progress.insert(tag.clone());
+                    seen_tags_bitcoin.insert(tag);
                 }
+                return Ok(true);
             } else {
                 debug!(
                     "No new tags for {}/{} found",
@@ -153,7 +165,7 @@ async fn check_and_process_bitcoin_tags(
             });
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 async fn check_and_process_sigs_tags(
@@ -163,8 +175,8 @@ async fn check_and_process_sigs_tags(
     in_progress: &mut HashSet<String>,
     dry_run: bool,
     auto: bool,
-) -> Result<()> {
-    info!("Checking for new detached sigs tags...");
+) -> Result<bool> {
+    debug!("Checking for new detached sigs tags...");
     match check_for_new_tags(
         seen_tags_sigs,
         &config.detached_repo_owner,
@@ -175,6 +187,7 @@ async fn check_and_process_sigs_tags(
     {
         Ok(new_tags) => {
             if !new_tags.is_empty() {
+                let mut processed_tags = false;
                 info!(
                     "Detected {} new tags for {}/{}",
                     new_tags.len(),
@@ -185,8 +198,11 @@ async fn check_and_process_sigs_tags(
                     if in_progress.contains(&tag) || build_exists_on_disk(config, &tag) {
                         if dry_run {
                             info!("Skipping build for sigs tag {tag} because --dry-run is enabled");
+                            seen_tags_sigs.insert(tag);
+                            processed_tags = true;
                             continue;
                         }
+                        info!("Processing detached sigs tag {tag}");
                         let args = BuildArgs {
                             action: BuildAction::CodeSigned,
                             tag: Some(tag.clone()),
@@ -199,6 +215,8 @@ async fn check_and_process_sigs_tags(
                             format!("Codesigned attestation process for tag {} failed", tag)
                         })?;
                         in_progress.remove(&tag);
+                        seen_tags_sigs.insert(tag);
+                        processed_tags = true;
                     } else {
                         warn!(
                             "Detached sigs tag {} detected but no corresponding build found. \
@@ -208,6 +226,7 @@ async fn check_and_process_sigs_tags(
                         );
                     }
                 }
+                return Ok(processed_tags);
             } else {
                 debug!(
                     "No new tags for {}/{} found",
@@ -224,5 +243,5 @@ async fn check_and_process_sigs_tags(
             });
         }
     }
-    Ok(())
+    Ok(false)
 }
