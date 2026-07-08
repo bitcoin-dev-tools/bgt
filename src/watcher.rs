@@ -41,6 +41,30 @@ fn build_exists_on_disk(config: &Config, tag: &str) -> bool {
     false
 }
 
+async fn run_watcher_job(
+    config: &Config,
+    args: BuildArgs,
+    job: &str,
+    tag: &str,
+    init_context: &'static str,
+    run_context: String,
+) -> Result<()> {
+    info!("BGT_JOB_START job={job} tag={tag}");
+    let result = async {
+        let builder = create_builder(config, args).await.context(init_context)?;
+        builder.run().await.with_context(|| run_context)?;
+        Ok(())
+    }
+    .await;
+
+    match &result {
+        Ok(()) => info!("BGT_JOB_FINISH job={job} tag={tag} status=success"),
+        Err(e) => error!("BGT_JOB_FINISH job={job} tag={tag} status=error error={e:?}"),
+    }
+
+    result
+}
+
 pub(crate) async fn run_watcher(
     config: &Config,
     octocrab: &Octocrab,
@@ -120,30 +144,41 @@ async fn check_and_process_bitcoin_tags(
                 );
                 for tag in new_tags {
                     if dry_run {
-                        info!("Skipping build for tag {tag} because --dry-run is enabled");
+                        info!("BGT_JOB_SKIP job=build tag={tag} reason=dry-run");
                         seen_tags_bitcoin.insert(tag);
                         continue;
                     }
-                    info!("Processing bitcoin tag {tag}");
                     let mut args = BuildArgs {
                         action: BuildAction::Build,
                         tag: Some(tag.clone()),
                         auto,
                     };
-                    let builder = create_builder(config, args.clone())
-                        .await
-                        .context("Failed to initialize first guix builder in watcher")?;
-                    builder
-                        .run()
-                        .await
-                        .with_context(|| format!("Build process for tag {} failed", tag))?;
+                    run_watcher_job(
+                        config,
+                        args.clone(),
+                        "build",
+                        &tag,
+                        "Failed to initialize first guix builder in watcher",
+                        format!("Build process for tag {} failed", tag),
+                    )
+                    .await
+                    .with_context(|| format!("Watcher build job for tag {} failed", tag))?;
 
                     args.action = BuildAction::NonCodeSigned;
-                    let builder = create_builder(config, args)
-                        .await
-                        .context("Failed to initialize non-codesigned builder in watcher")?;
-                    builder.run().await.with_context(|| {
-                        format!("Noncodesigned attestation process for tag {} failed", tag)
+                    run_watcher_job(
+                        config,
+                        args,
+                        "noncodesigned-attest",
+                        &tag,
+                        "Failed to initialize non-codesigned builder in watcher",
+                        format!("Noncodesigned attestation process for tag {} failed", tag),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Watcher noncodesigned attestation job for tag {} failed",
+                            tag
+                        )
                     })?;
                     in_progress.insert(tag.clone());
                     seen_tags_bitcoin.insert(tag);
@@ -197,22 +232,27 @@ async fn check_and_process_sigs_tags(
                 for tag in new_tags {
                     if in_progress.contains(&tag) || build_exists_on_disk(config, &tag) {
                         if dry_run {
-                            info!("Skipping build for sigs tag {tag} because --dry-run is enabled");
+                            info!("BGT_JOB_SKIP job=codesigned-attest tag={tag} reason=dry-run");
                             seen_tags_sigs.insert(tag);
                             processed_tags = true;
                             continue;
                         }
-                        info!("Processing detached sigs tag {tag}");
                         let args = BuildArgs {
                             action: BuildAction::CodeSigned,
                             tag: Some(tag.clone()),
                             auto,
                         };
-                        let builder = create_builder(config, args)
-                            .await
-                            .context("Failed to initialize builder")?;
-                        builder.run().await.with_context(|| {
-                            format!("Codesigned attestation process for tag {} failed", tag)
+                        run_watcher_job(
+                            config,
+                            args,
+                            "codesigned-attest",
+                            &tag,
+                            "Failed to initialize builder",
+                            format!("Codesigned attestation process for tag {} failed", tag),
+                        )
+                        .await
+                        .with_context(|| {
+                            format!("Watcher codesigned attestation job for tag {} failed", tag)
                         })?;
                         in_progress.remove(&tag);
                         seen_tags_sigs.insert(tag);
